@@ -910,6 +910,10 @@ end
 -- says "up to date". If it's different, it overwrites this very file on disk and tells you to restart
 -- destiny.lua so lmaobox picks up the new version (a running script can't reload itself).
 local UPDATE_URL = "https://raw.githubusercontent.com/eintoaster/Destiny-Lua-/refs/heads/main/destiny.lua"
+-- THE VERSION OF THIS FILE. Raise it every time you push a new destiny.lua to GitHub (any text works, e.g.
+-- "1.0.1"): the updater compares this with the version line in the GitHub file. (lmaobox doesn't let scripts
+-- READ files outside the TF2 folder either, so comparing with destiny.lua on disk always looked "different".)
+local DESTINY_VERSION = "1.0.0"
 local UPDATE_DELAY = 3                                  -- seconds after load before the check fires
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
@@ -972,11 +976,14 @@ local function updaterCheck()
         notify("✖", "Update check failed", tostring(remote), RED)
         return
     end
-    local okf, f = pcall(io.open, updater.path, "rb")
-    local current = (okf and f) and f:read("*a") or nil
-    if okf and f then f:close() end
-    if current and current == remote then
-        notify("✔", "Destiny is up to date", tostring(updater.path), accent())
+    -- compare versions: the one written in the GitHub file vs the one of this running script
+    local remoteVersion = remote:match('local%s+DESTINY_VERSION%s*=%s*"([^"]+)"')
+    if not remoteVersion then
+        notify("✖", "Update check failed", "the GitHub file has no DESTINY_VERSION line", RED)
+        return
+    end
+    if remoteVersion == DESTINY_VERSION then
+        notify("✔", "Destiny is up to date", "version " .. DESTINY_VERSION, accent())
         return
     end
     -- Write the download to a temp file, check it, move the old script aside, rename the temp file into
@@ -1016,7 +1023,7 @@ local function updaterCheck()
     end
     pcall(os.remove, old)
     updater.path = path
-    notify("⚡", "Destiny was updated", "Please restart destiny.lua to load it", GOLD)
+    notify("⚡", "Destiny updated to " .. remoteVersion, "Please restart destiny.lua to load it", GOLD)
     print("[destiny] updated: " .. tostring(path))
 end
 
@@ -3987,7 +3994,7 @@ local PAGES = {
     { group = "SYSTEM", icon = "ⓘ", name = "Info", draw = function()
         section("About")
         paraCard("Destiny v1 Visual Lua for LMAOBOX.")
-        buttonRow("Check for updates", updater.running and "Checking..." or "Check", function() updaterCheck() end)
+        buttonRow("Check for updates (this is version " .. DESTINY_VERSION .. ")", updater.running and "Checking..." or "Check", function() updaterCheck() end)
     end },
 }
 
