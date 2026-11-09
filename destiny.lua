@@ -3932,7 +3932,7 @@ local PAGES = {
     end },
     { group = "SYSTEM", icon = "ⓘ", name = "Info", draw = function()
         section("About")
-        paraCard("Destiny v1 Visual Lua for LMAOBOX.")
+        paraCard("Destiny v1 Visual Lua lalalla for LMAOBOX.")
     end },
 }
 
