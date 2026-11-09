@@ -3932,7 +3932,7 @@ local PAGES = {
     end },
     { group = "SYSTEM", icon = "ⓘ", name = "Info", draw = function()
         section("About")
-        paraCard("Destiny v1 Visual Lua for LMAOBOX WIPPP.")
+        paraCard("Destiny v1 Visual Lua for L2MAOBOX WIPPP.")
         buttonRow("Check for updates", updater.running and "Checking..." or "Check", function() updaterCheck() end)
     end },
 }
