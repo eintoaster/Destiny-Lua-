@@ -979,11 +979,29 @@ local function updaterCheck()
         notify("✔", "Destiny is up to date", tostring(updater.path), accent())
         return
     end
-    local okw, wf = pcall(io.open, updater.path, "wb")
-    if not okw or not wf then
-        notify("✖", "Update found but couldn't be saved", tostring(okw and wf or "io blocked"), RED)
+    -- try to open the file for writing; remember the real error text of every attempt
+    local errs, wf, usedPath = {}, nil, nil
+    local function tryOpen(path, label)
+        if wf or not path then return end
+        local ok, f, err = pcall(io.open, path, "wb")
+        if ok and f then wf, usedPath = f, path; return end
+        errs[#errs + 1] = label .. ": " .. tostring(ok and (err or "nil") or f)
+    end
+    tryOpen(updater.path, "path")
+    if not wf then tryOpen((updater.path:gsub("\\", "/")), "slashes") end
+    if not wf then
+        -- maybe the loaded file is locked for overwriting: move it aside, then write a fresh one
+        pcall(os.remove, updater.path .. ".old")
+        local okr = pcall(os.rename, updater.path, updater.path .. ".old")
+        if okr then tryOpen(updater.path, "after rename") end
+    end
+    if not wf then
+        local msg = table.concat(errs, " | ")
+        print("[destiny] update save failed for " .. tostring(updater.path) .. " -> " .. msg)
+        notify("✖", "Update found but couldn't be saved", msg ~= "" and msg or tostring(updater.path), RED)
         return
     end
+    updater.path = usedPath
     wf:write(remote)
     wf:close()
     -- read it back to be sure the real file now holds the new version
