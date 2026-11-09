@@ -4,6 +4,10 @@
     Opens with its own key (F8 by default). Configs are saved next to destiny.lua
     (destiny_autosave.cfg, destiny_slot1.cfg ...) or in the first folder lmaobox lets it write to.
 
+    Self-updater: on load, destiny fetches version.txt from GitHub and compares it with L.VERSION.
+    If a newer version exists it downloads destiny.lua, backs up the old one to destiny.lua.bak,
+    writes the new file, and asks you to reload the script (Lua can't replace a running chunk).
+
      1. basics, settings, config files
      2. themes, colours, gradients
      3. drawing helpers
@@ -12,7 +16,8 @@
      6. effects: notifications, damage numbers, kill announcer, sounds, waifu bubbles
      7. game events (kills, deaths, hits; class and weapon names)
      8. overlays: watermark, input monitor, waifus, notifications, damage numbers,
-        hit effects (screen edge, extra effect, shake), lmaobox HUD, speed graph, welcome message
+        hit effects (screen edge, extra effect, shake), lmaobox HUD, speed graph, welcome message,
+        self-updater
      9. menu background effects
     10. world look
     11. menu widgets, pages, window
@@ -34,6 +39,7 @@ local function round(v) return floor(v + 0.5) end
 local C_BLACK, C_WHITE = { 0, 0, 0 }, { 255, 255, 255 }
 -- fixed lists and a few state values live in one table (Lua allows only 200 top-level locals)
 local L = {}
+L.VERSION = "1.1.0"
 -- Cleanup: lmaobox's draw calls leave ~250 bytes of garbage each (hundreds a frame). The generational mode let
 -- ~110 MB pile up and then cleaned it all at once = 100 ms freezes. Incremental mode cleans
 -- in small pieces as it goes, so it never piles up into one big freeze.
@@ -813,6 +819,11 @@ local notes = {}
 
 local function notify(icon, title, body, col)
     if not settings.ntOn then return end
+    table.insert(notes, 1, { icon = icon, title = title, body = body or "", col = col or accent(), t0 = now() })
+    if #notes > 6 then table.remove(notes) end
+end
+
+local function forceNotify(icon, title, body, col)
     table.insert(notes, 1, { icon = icon, title = title, body = body or "", col = col or accent(), t0 = now() })
     if #notes > 6 then table.remove(notes) end
 end
@@ -3068,6 +3079,262 @@ function L.drawWelcome()
 end
 
 ---------------------------------------------------------------------------
+-- 8l+. Self-updater: checks GitHub for updates, downloads new destiny.lua
+---------------------------------------------------------------------------
+L.updater = {
+    state = "idle",
+    statusText = "Idle",
+    checkAt = nil,
+    autoChecked = false,
+    remoteVersion = nil,
+    restartRequired = false,
+    newVersion = nil,
+    updatedAt = nil,
+    checkStartedAt = nil,
+    REPO_VER = "https://raw.githubusercontent.com/eintoaster/Destiny-Lua-/refs/heads/main/version.txt",
+    REPO_LUA = "https://raw.githubusercontent.com/eintoaster/Destiny-Lua-/refs/heads/main/destiny.lua",
+}
+
+local function cleanVer(v)
+    return tostring(v or ""):gsub("^[vV]", ""):match("^%s*(.-)%s*$")
+end
+
+local function isNewerVersion(remote, localV)
+    local rClean = cleanVer(remote)
+    local lClean = cleanVer(localV)
+    if rClean == "" or rClean == lClean then return false end
+
+    local rParts, lParts = {}, {}
+    for n in rClean:gmatch("(%d+)") do rParts[#rParts + 1] = tonumber(n) or 0 end
+    for n in lClean:gmatch("(%d+)") do lParts[#lParts + 1] = tonumber(n) or 0 end
+
+    local count = max(#rParts, #lParts)
+    for i = 1, count do
+        local r = rParts[i] or 0
+        local l = lParts[i] or 0
+        if r > l then return true end
+        if r < l then return false end
+    end
+    return rClean ~= lClean
+end
+
+function L.updater.getScriptPath()
+    local ok, info = pcall(debug.getinfo, 1, "S")
+    local src = ok and info and info.source or ""
+    local clean = src:match("^@?(.*)")
+    if clean and clean ~= "" and clean:lower():match("%.lua$") then
+        return clean
+    end
+    local ok2, name = pcall(GetScriptName)
+    local sname = ok2 and tostring(name) or ""
+    if sname ~= "" then
+        if sname:find("[\\/]") then return sname end
+        if LUA_DIR and LUA_DIR ~= "" then return LUA_DIR .. sname end
+    end
+    if LUA_DIR and LUA_DIR ~= "" then
+        return LUA_DIR .. "destiny.lua"
+    end
+    local la = os.getenv("LOCALAPPDATA")
+    if la and la ~= "" then
+        return la .. "\\lua\\destiny.lua"
+    end
+    return "destiny.lua"
+end
+
+function L.updater.downloadUpdate(remoteVer)
+    L.updater.state = "downloading"
+    L.updater.statusText = "Downloading update..."
+    local tStamp = tostring(floor(now() * 1000))
+    local scriptUrl = L.updater.REPO_LUA .. "?t=" .. tStamp
+
+    local ok, data = pcall(http.Get, scriptUrl)
+    if not ok or type(data) ~= "string" or data:sub(1, 5) == "ERROR" or #data < 20000 then
+        L.updater.state = "error"
+        L.updater.statusText = "Download failed"
+        forceNotify("✖", "Update failed", "Could not download destiny.lua", RED)
+        print("[destiny] Update failed: could not download destiny.lua from GitHub")
+        return false
+    end
+
+    -- Ensure it contains valid destiny lua code
+    if not data:find("destiny") or not data:find("callbacks%.Register") then
+        L.updater.state = "error"
+        L.updater.statusText = "Corrupted download"
+        forceNotify("✖", "Update failed", "Corrupted download data", RED)
+        print("[destiny] Update failed: downloaded file does not appear to be valid destiny.lua")
+        return false
+    end
+
+    local scriptPath = L.updater.getScriptPath()
+    local bakPath = scriptPath:gsub("%.lua$", "") .. ".lua.bak"
+
+    -- Backup existing file
+    local fIn = io.open(scriptPath, "rb")
+    if fIn then
+        local oldCode = fIn:read("*a")
+        fIn:close()
+        if oldCode and #oldCode > 0 then
+            local fBak = io.open(bakPath, "wb")
+            if fBak then
+                fBak:write(oldCode)
+                fBak:close()
+            end
+        end
+    end
+
+    -- Write new file
+    local fOut, err = io.open(scriptPath, "wb")
+    if not fOut then
+        L.updater.state = "error"
+        L.updater.statusText = "File write failed"
+        forceNotify("✖", "Update failed", "Could not write " .. scriptPath, RED)
+        print("[destiny] Update failed: could not write to " .. tostring(scriptPath) .. ": " .. tostring(err))
+        return false
+    end
+    fOut:write(data)
+    fOut:close()
+
+    L.updater.state = "done"
+    L.updater.restartRequired = true
+    L.updater.newVersion = remoteVer
+    L.updater.updatedAt = now()
+    L.updater.statusText = "Updated to v" .. remoteVer .. " (restart required)"
+
+    print("[destiny] ==================================================")
+    print("[destiny] Destiny updated successfully to v" .. remoteVer .. "!")
+    print("[destiny] Backup saved to: " .. bakPath)
+    print("[destiny] Please restart destiny lua to apply the update.")
+    print("[destiny] ==================================================")
+
+    forceNotify("✔", "Update complete!", "Please restart destiny lua", accent())
+    return true
+end
+
+function L.updater.handleVersionCheck(data, isManual)
+    if L.updater.state ~= "checking" then return end
+
+    if not data or type(data) ~= "string" or data:sub(1, 5) == "ERROR" or #data == 0 then
+        L.updater.state = "idle"
+        L.updater.statusText = "Check failed (network error)"
+        if isManual then
+            forceNotify("✖", "Update check failed", "Could not reach GitHub", RED)
+        end
+        print("[destiny] Update check failed: could not fetch version.txt")
+        return
+    end
+
+    local remoteVer = data:match("^%s*(.-)%s*$")
+    L.updater.remoteVersion = remoteVer
+
+    if isNewerVersion(remoteVer, L.VERSION) then
+        L.updater.statusText = "Update available (v" .. remoteVer .. ")"
+        print("[destiny] Update found: v" .. remoteVer .. " (current: v" .. L.VERSION .. ")")
+        forceNotify("✦", "Updating Destiny", "Downloading v" .. remoteVer .. "...", accent())
+        L.updater.downloadUpdate(remoteVer)
+    else
+        L.updater.state = "idle"
+        L.updater.statusText = "Latest update (v" .. L.VERSION .. ")"
+        print("[destiny] Latest update: Destiny is up to date (v" .. L.VERSION .. ")")
+        forceNotify("✔", "Latest update", "Destiny is up to date (v" .. L.VERSION .. ")", accent())
+    end
+end
+
+function L.updater.check(isManual)
+    if L.updater.state == "checking" or L.updater.state == "downloading" then return end
+    L.updater.state = "checking"
+    L.updater.statusText = "Checking for updates..."
+    L.updater.checkStartedAt = now()
+    if isManual then forceNotify("◷", "Checking updates", "Contacting GitHub...", accent()) end
+    print("[destiny] Checking for updates on GitHub...")
+
+    local tStamp = tostring(floor(now() * 1000))
+    local verUrl = L.updater.REPO_VER .. "?t=" .. tStamp
+
+    local started = false
+    if http and http.GetAsync then
+        local ok = pcall(http.GetAsync, verUrl, function(data)
+            L.updater.handleVersionCheck(data, isManual)
+        end)
+        started = ok
+    end
+    if not started then
+        if http and http.Get then
+            local ok, data = pcall(http.Get, verUrl)
+            L.updater.handleVersionCheck(ok and data or nil, isManual)
+        else
+            L.updater.state = "idle"
+            L.updater.statusText = "http library missing"
+            if isManual then forceNotify("✖", "Update error", "http library not available", RED) end
+        end
+    end
+end
+
+function L.updater.forceUpdate()
+    if L.updater.state == "downloading" then return end
+    forceNotify("✦", "Updating Destiny", "Downloading latest destiny.lua...", accent())
+    L.updater.downloadUpdate("latest")
+end
+
+function L.drawRestartBanner(el)
+    local sw = draw.GetScreenSize()
+    local inT = easeOutBack(clamp(el / 0.5, 0, 1))
+    local out = clamp((16 - el) / 0.5, 0, 1)
+    local W = 400
+    local H = 66
+    local x = (sw - W) / 2
+    local y = 70 - (1 - inT) * 40
+    local keep = ALPHA
+    ALPHA = keep * clamp(el / 0.25, 0, 1) * out
+    local acc = accent()
+    roundRect(x - 1, y + 4, W + 2, H, 18, C_BLACK, 70)
+    roundRect(x, y, W, H, 16, T.card, 245)
+    L.gradBorder(x, y, W, H, 16, logoStops(), now() * 0.3)
+    -- tile icon
+    roundRect(x + 12, y + 11, 44, 44, 12, T.pill)
+    roundRect(x + 14, y + 13, 40, 40, 11, acc, 40)
+    textC(F.title, "↻", x + 34, y + 20, 24, acc)
+
+    drawLogo("DESTINY", x + 68, y + 10)
+    local verStr = L.updater.newVersion and ("  v" .. L.updater.newVersion) or ""
+    text(F.small, "updated" .. verStr, x + 74 + logoWidth("DESTINY"), y + 13, 24, T.text2)
+    text(F.bold, "Please restart destiny lua", x + 68, y + 37, 20, acc)
+
+    ALPHA = keep
+end
+
+function L.drawUpdater()
+    if not L.updater.checkAt then
+        L.updater.checkAt = now() + 2.0
+    end
+    if not L.updater.autoChecked and now() >= L.updater.checkAt then
+        L.updater.autoChecked = true
+        L.updater.check(false)
+    end
+
+    -- Fallback timeout if async check hangs
+    if L.updater.state == "checking" and L.updater.checkStartedAt and (now() - L.updater.checkStartedAt > 5.0) then
+        L.updater.checkStartedAt = nil
+        local tStamp = tostring(floor(now() * 1000))
+        local verUrl = L.updater.REPO_VER .. "?t=" .. tStamp
+        if http and http.Get then
+            local ok, data = pcall(http.Get, verUrl)
+            L.updater.handleVersionCheck(ok and data or nil, false)
+        else
+            L.updater.state = "idle"
+            L.updater.statusText = "Check timed out"
+        end
+    end
+
+    -- Draw restart banner if update was installed
+    if L.updater.restartRequired and L.updater.updatedAt then
+        local el = now() - L.updater.updatedAt
+        if el >= 0 and el <= 16 then
+            L.drawRestartBanner(el)
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- 8m. M0MENT4M menu backgrounds: Radiance ribbons, Silentium ribbons + butterflies (Ribbons / SlRibbons / Butterflies)
 ---------------------------------------------------------------------------
 L.RDRIB = { { 124, 108, 255 }, { 150, 118, 255 }, { 96, 108, 255 }, { 170, 128, 255 }, { 110, 94, 240 }, { 140, 150, 255 }, { 120, 100, 250 } }
@@ -3878,6 +4145,11 @@ local PAGES = {
         for i = 1, min(12, #list) do
             infoRow(list[i][1], string.format("%.2f ms  /  %.1f ms  /  %.1f KB", list[i][2], list[i][3], list[i][4]))
         end
+        section("Updates")
+        infoRow("Destiny version", "v" .. L.VERSION)
+        infoRow("Update status", L.updater.statusText or "Idle")
+        buttonRow("Check for updates now", "Check", function() L.updater.check(true) end)
+        buttonRow("Force redownload from GitHub", "Redownload", function() L.updater.forceUpdate() end)
         section("About")
         paraCard("DESTINY  -  menu, overlays and effects for lmaobox. Design ported from M0MENT4M 2.2 (themes, Radiance, Mercury and Silentium looks, HUDs, hit effects, waifus).")
         paraCard("Opens with its own key (F8 by default, change it under Config), separate from the lmaobox menu. ESC closes it. Everything on screen can be dragged while the menu is open.")
@@ -4075,6 +4347,7 @@ local function onDraw()
     if settings.compOn then safe("waifu", drawCompanion) end   -- (she stays in her corner, menu or not)
     safe("notifications", drawNotifications)
     safe("welcome", L.drawWelcome)
+    safe("updater", L.drawUpdater)
 
     if menu.openT > 0.01 then
         safe("background", drawBackground, menu.openT)
