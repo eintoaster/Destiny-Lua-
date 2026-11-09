@@ -979,67 +979,42 @@ local function updaterCheck()
         notify("✔", "Destiny is up to date", tostring(updater.path), accent())
         return
     end
-    -- try to open the file for writing; remember the real error text of every attempt
-    local errs, wf, usedPath = {}, nil, nil
-    local function tryOpen(path, label)
-        if wf or not path then return end
-        local ok, f, err = pcall(io.open, path, "wb")
-        if ok and f then wf, usedPath = f, path; return end
-        errs[#errs + 1] = label .. ": " .. tostring(ok and (err or "nil") or f)
+    -- lmaobox refuses to create/overwrite a file named *.lua directly, but writing other extensions and
+    -- renaming works. So: write the download to destiny.lua.tmp, check it, move the old file aside,
+    -- rename the .tmp into place - and put the old file back if any step fails.
+    local path = updater.path
+    local tmp, old = path .. ".tmp", path .. ".old"
+    local function fail(why)
+        print("[destiny] update save failed for " .. tostring(path) .. " -> " .. tostring(why))
+        notify("✖", "Update found but couldn't be saved", tostring(why):sub(1, 90), RED)
     end
-    tryOpen(updater.path, "path")
-    if not wf then tryOpen((updater.path:gsub("\\", "/")), "slashes") end
-    if not wf then
-        -- maybe the loaded file is locked for overwriting: move it aside, then write a fresh one
-        pcall(os.remove, updater.path .. ".old")
-        local okr = pcall(os.rename, updater.path, updater.path .. ".old")
-        if okr then tryOpen(updater.path, "after rename") end
-    end
-    if not wf and UnloadScript and LoadScript then
-        -- last resort: lmaobox may keep the loaded file locked. Unload ourselves, write the file, load it again.
-        -- (the old file is untouched if opening for writing fails, so it is simply loaded back in that case)
-        local path = updater.path
-        pcall(UnloadScript, path)
-        local ok, f, err = pcall(io.open, path, "wb")
-        if ok and f then
-            local okw = pcall(f.write, f, remote)
-            f:close()
-            local okr, rf = pcall(io.open, path, "rb")
-            local back = (okr and rf) and rf:read("*a") or nil
-            if okr and rf then rf:close() end
-            pcall(LoadScript, path)
-            if okw and back == remote then return end      -- this running copy is gone; the new one has started
-        else
-            errs[#errs + 1] = "unload: " .. tostring(ok and (err or "nil") or f)
-            pcall(LoadScript, path)
-        end
-    end
-    if not wf then
-        local msg = table.concat(errs, " | ")
-        -- diagnose: can this folder take ANY new file? (separates "folder blocked" from "this file locked")
-        local dir = updater.path:match("^(.*[\\/])") or ""
-        local okd, df = pcall(io.open, dir .. "destiny_write_test.tmp", "w")
-        local dirOk = okd and df ~= nil and df ~= false
-        if dirOk then df:write("ok"); df:close(); pcall(os.remove, dir .. "destiny_write_test.tmp") end
-        local short = (dirOk and "folder OK, file locked" or "folder blocked") .. " | " .. msg:sub(1, 70)
-        print("[destiny] update save failed for " .. tostring(updater.path) .. " -> " .. msg .. " | folder writable: " .. tostring(dirOk))
-        notify("✖", "Update found but couldn't be saved", short, RED)
-        return
-    end
-    updater.path = usedPath
-    wf:write(remote)
+    local ok, wf, werr = pcall(io.open, tmp, "wb")
+    if not ok or not wf then return fail("can't create .tmp: " .. tostring(ok and werr or wf)) end
+    local okw = pcall(wf.write, wf, remote)
     wf:close()
-    -- read it back to be sure the real file now holds the new version
-    local okr, rf = pcall(io.open, updater.path, "rb")
+    local okr, rf = pcall(io.open, tmp, "rb")
     local back = (okr and rf) and rf:read("*a") or nil
     if okr and rf then rf:close() end
-    if back ~= remote then
-        notify("✖", "Update was written but verification failed", updater.path, RED)
-        return
+    if not okw or back ~= remote then
+        pcall(os.remove, tmp)
+        return fail(".tmp written incorrectly")
     end
+    pcall(os.remove, old)
+    local o1, r1, e1 = pcall(os.rename, path, old)
+    if not o1 or not r1 then
+        pcall(os.remove, tmp)
+        return fail("can't move old file: " .. tostring(o1 and e1 or r1))
+    end
+    local o2, r2, e2 = pcall(os.rename, tmp, path)
+    if not o2 or not r2 then
+        pcall(os.rename, old, path)                 -- put the old script back
+        pcall(os.remove, tmp)
+        return fail("can't rename .tmp into place: " .. tostring(o2 and e2 or r2))
+    end
+    pcall(os.remove, old)
+    updater.path = path
     notify("⚡", "Destiny was updated", "Please restart destiny.lua to load it", GOLD)
-    print("[destiny] updated: " .. tostring(updater.path))
-    print("[destiny] update downloaded - please restart destiny.lua")
+    print("[destiny] updated: " .. tostring(path))
 end
 
 ---------------------------------------------------------------------------
