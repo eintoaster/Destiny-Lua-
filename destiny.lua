@@ -913,7 +913,7 @@ local UPDATE_URL = "https://raw.githubusercontent.com/eintoaster/Destiny-Lua-/re
 -- THE VERSION OF THIS FILE. Raise it every time you push a new destiny.lua to GitHub (any text works, e.g.
 -- "1.0.1"): the updater compares this with the version line in the GitHub file. (lmaobox doesn't let scripts
 -- READ files outside the TF2 folder either, so comparing with destiny.lua on disk always looked "different".)
-local DESTINY_VERSION = "1.0.0"
+local DESTINY_VERSION = "1.1.1"
 local UPDATE_DELAY = 3                                  -- seconds after load before the check fires
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
