@@ -979,17 +979,20 @@ local function updaterCheck()
         notify("✔", "Destiny is up to date", tostring(updater.path), accent())
         return
     end
-    -- lmaobox refuses to create/overwrite a file named *.lua directly, but writing other extensions and
-    -- renaming works. So: write the download to destiny.lua.tmp, check it, move the old file aside,
-    -- rename the .tmp into place - and put the old file back if any step fails.
+    -- Write the download to a temp file, check it, move the old script aside, rename the temp file into
+    -- place - and put the old script back if any step fails.
     local path = updater.path
-    local tmp, old = path .. ".tmp", path .. ".old"
+    -- lmaobox only lets scripts CREATE files inside the TF2 folder (relative paths, like configs and Paimon),
+    -- not in the lua folder - but os.rename can still move a finished file there.
+    pcall(filesystem.CreateDirectory, "destiny_files")
+    local tmp, old = "destiny_files/destiny_update.tmp", path .. ".old"
     local function fail(why)
         print("[destiny] update save failed for " .. tostring(path) .. " -> " .. tostring(why))
-        notify("✖", "Update found but couldn't be saved", tostring(why):sub(1, 90), RED)
+        local short = tostring(why):gsub("[%a]:[\\/][^%s]*[\\/]", ""):sub(1, 90)   -- drop long folder paths
+        notify("✖", "Update found but couldn't be saved", short, RED)
     end
     local ok, wf, werr = pcall(io.open, tmp, "wb")
-    if not ok or not wf then return fail("can't create .tmp: " .. tostring(ok and werr or wf)) end
+    if not ok or not wf then return fail("can't create temp file: " .. tostring(ok and werr or wf)) end
     local okw = pcall(wf.write, wf, remote)
     wf:close()
     local okr, rf = pcall(io.open, tmp, "rb")
@@ -1009,7 +1012,7 @@ local function updaterCheck()
     if not o2 or not r2 then
         pcall(os.rename, old, path)                 -- put the old script back
         pcall(os.remove, tmp)
-        return fail("can't rename .tmp into place: " .. tostring(o2 and e2 or r2))
+        return fail("can't move new file into lua folder (other drive?): " .. tostring(o2 and e2 or r2))
     end
     pcall(os.remove, old)
     updater.path = path
