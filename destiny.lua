@@ -962,11 +962,14 @@ local function updaterCheck()
         return
     end
     updater.running = true
-    -- raw.githubusercontent.com caches a file for a few minutes after a push, so a check right after
-    -- editing on GitHub can still get served the stale cached copy. A changing query string on the end
-    -- is a different URL to the CDN, which skips that cache and goes back to GitHub for a fresh copy.
-    local bust = UPDATE_URL .. "?t=" .. tostring(floor(now() * 1000))
-    local ok, remote = pcall(http.Get, bust)
+    -- raw.githubusercontent.com keeps serving a cached copy for ~5 minutes after a push, and ignores "?t=..."
+    -- on the end. So: ask the GitHub API for the newest commit id, then download the file AT that commit
+    -- (a fixed commit never changes, so it can never be a stale copy). Falls back to the normal address.
+    local url = UPDATE_URL
+    local okA, api = pcall(http.Get, "https://api.github.com/repos/eintoaster/Destiny-Lua-/commits/main")
+    local sha = okA and type(api) == "string" and api:match('"sha"%s*:%s*"(%x+)"')
+    if sha then url = "https://raw.githubusercontent.com/eintoaster/Destiny-Lua-/" .. sha .. "/destiny.lua" end
+    local ok, remote = pcall(http.Get, url)
     updater.running = false
     if not ok then
         notify("✖", "Can't check for updates", tostring(remote), RED)
