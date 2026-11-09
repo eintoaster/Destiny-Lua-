@@ -938,7 +938,11 @@ local function updaterCheck()
         return
     end
     updater.running = true
-    local ok, remote = pcall(http.Get, UPDATE_URL)
+    -- raw.githubusercontent.com caches a file for a few minutes after a push, so a check right after
+    -- editing on GitHub can still get served the stale cached copy. A changing query string on the end
+    -- is a different URL to the CDN, which skips that cache and goes back to GitHub for a fresh copy.
+    local bust = UPDATE_URL .. "?t=" .. tostring(floor(now() * 1000))
+    local ok, remote = pcall(http.Get, bust)
     updater.running = false
     if not ok then
         notify("✖", "Can't check for updates", tostring(remote), RED)
@@ -3932,7 +3936,7 @@ local PAGES = {
     end },
     { group = "SYSTEM", icon = "ⓘ", name = "Info", draw = function()
         section("About")
-        paraCard("Destiny v1 Visual Lua for L2MAOBOX WIPPP.")
+        paraCard("Destiny v1 Visual Lua for LMAOBOX.")
         buttonRow("Check for updates", updater.running and "Checking..." or "Check", function() updaterCheck() end)
     end },
 }
