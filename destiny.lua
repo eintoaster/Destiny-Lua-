@@ -4152,7 +4152,7 @@ local PAGES = {
         buttonRow("Force redownload from GitHub", "Redownload", function() L.updater.forceUpdate() end)
         section("About")
         paraCard("DESTINY  -  menu, overlays and effects for lmaobox. Design ported from M0MENT4M 2.2 (themes, Radiance, Mercury and Silentium looks, HUDs, hit effects, waifus).")
-        paraCard("Opens with its own key (F8 by default, change it under Config), separate from the lmaobox menu. ESC closes it. Everything on screen can be dragged while the menu is open.")
+        paraCard("Opens  v2323v2323with its own key (F8 by default, change it under Config), separate from the lmaobox menu. ESC closes it. Everything on screen can be dragged while the menu is open.")
     end },
 }
 
