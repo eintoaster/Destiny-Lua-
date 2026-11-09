@@ -937,20 +937,30 @@ pcall(function()
 end)
 
 -- lmaobox's ASYNC downloads fail above ~20 KB with "WinINet Error Code
-local function updaterCheck()
+-- the commits feed isn't rate limited like api.github.com (60 checks an hour)
+local function latestSha()
+    local ok, feed = pcall(http.Get, "https://github.com/eintoaster/Destiny-Lua-/commits/main.atom")
+    local sha = ok and type(feed) == "string" and feed:match("Commit/(%x+)")
+    if sha and #sha == 40 then return sha end
+    local okA, api = pcall(http.Get, "https://api.github.com/repos/eintoaster/Destiny-Lua-/commits/main")
+    sha = okA and type(api) == "string" and api:match('"sha"%s*:%s*"(%x+)"')
+    if sha then return sha end
+    if type(api) == "string" and api:find("rate limit", 1, true) then return nil, "GitHub is busy, try again later" end
+    return nil, "GitHub didn't answer"
+end
+
+local function updaterCheck(auto)
     if updater.running then return end
-    if not http then notify("✖", "Can't check for updates", "lmaobox blocks downloads (http)", RED); return end
+    if not http then if not auto then notify("✖", "Can't check for updates", "lmaobox blocks downloads (http)", RED) end; return end
     if not io or not updater.path or updater.path == "" then
-        notify("✖", "Can't check for updates", "the script's own file path is unknown", RED)
+        if not auto then notify("✖", "Can't check for updates", "the script's own file path is unknown", RED) end
         return
     end
     updater.running = true
-    -- automatic: GitHub gives every push its own commit id
-    local okA, api = pcall(http.Get, "https://api.github.com/repos/eintoaster/Destiny-Lua-/commits/main")
-    local sha = okA and type(api) == "string" and api:match('"sha"%s*:%s*"(%x+)"')
+    local sha, why = latestSha()
     if not sha then
         updater.running = false
-        notify("✖", "Can't check for updates", "GitHub didn't answer: " .. tostring(api):sub(1, 60), RED)
+        if not auto then notify("✖", "Can't check for updates", why, RED) end
         return
     end
     local installed = nil
@@ -958,7 +968,7 @@ local function updaterCheck()
     if okI and fi then installed = (fi:read("*a") or ""):match("%x+"); fi:close() end
     if installed == sha then
         updater.running = false
-        notify("✔", "Destiny is up to date", "version " .. sha:sub(1, 7), accent())
+        if not auto then notify("✔", "Destiny is up to date", "version " .. sha:sub(1, 7), accent()) end
         return
     end
     local ok, remote = pcall(http.Get, "https://raw.githubusercontent.com/eintoaster/Destiny-Lua-/" .. sha .. "/destiny.lua")
@@ -4202,7 +4212,7 @@ local function onDraw()
     -- auto-update: the menu is already up and usable
     if not updater.checked and now() >= updater.startAt then
         updater.checked = true
-        safe("update check", updaterCheck)
+        safe("update check", updaterCheck, true)
     end
 
     -- game-world effects first
