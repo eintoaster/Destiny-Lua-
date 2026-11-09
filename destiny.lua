@@ -62,6 +62,23 @@ pcall(function()
         LUA_DIR = (ok3 and la) and (la .. "\\lua\\") or ""
     end
 end)
+
+-- fallback: if the path wasn't detected above, look for destiny.lua in the script's own folder
+if not L.SCRIPT_PATH and LUA_DIR and LUA_DIR ~= "" then
+    local guess = LUA_DIR .. "destiny.lua"
+    local ok, f = pcall(io.open, guess, "rb")
+    if ok and f then f:close(); L.SCRIPT_PATH = guess end
+end
+-- also try the TF2 folder and the localappdata\lua folder
+if not L.SCRIPT_PATH then
+    for _, c in ipairs({ "destiny.lua", "destiny_files\\destiny.lua" }) do
+        local ok, f = pcall(io.open, c, "rb")
+        if ok and f then f:close(); L.SCRIPT_PATH = c; break end
+    end
+end
+-- diagnostic so you can check the console on load
+print("[destiny] script path: " .. tostring(L.SCRIPT_PATH or "<NOT FOUND - updater cannot work>"))
+
 pcall(filesystem.CreateDirectory, LUA_DIR .. "destiny_files")
 pcall(filesystem.CreateDirectory, "destiny_files")
 L.CFG_TRIED = {}
@@ -748,28 +765,44 @@ local function notify(icon, title, body, col)
 end
 
 --=========================================================================
--- Auto-updater (runs once, ~2.5 s after the script loads)
+-- Auto-updater
 --=========================================================================
 L.UPDATE_URL    = "https://raw.githubusercontent.com/eintoaster/Destiny-Lua-/refs/heads/main/destiny.lua"
-L.UPDATE_MARKER = "auto-updater v1"   -- appears only inside this block, so it tells local-newer vs pushed
+L.UPDATE_MARKER = "auto-updater v1"
 L.updateState   = "idle"
 L.updateDone    = false
 L.updateDueAt   = nil
+L.updateRetries = 0
+L.updateNextAt  = nil
 
 local function normalizeEOL(s) return (s:gsub("\r\n", "\n")) end
+
+-- always show update messages, even if the user turned notifications off in settings
+local function updateNotify(icon, title, body, col)
+    table.insert(notes, 1, { icon = icon, title = title, body = body or "", col = col or accent(), t0 = now() })
+    if #notes > 6 then table.remove(notes) end
+end
 
 function L.doUpdateCheck()
     if L.updateDone then return end
     L.updateDone = true
 
     if not http then
-        L.updateState = "failed"
-        print("[destiny] update: http library not available")
+        L.updateState = "failed: no http"
+        print("[destiny] update: http library not available in this lmaobox build")
+        updateNotify("✖", "Update check failed", "http library not available", RED)
         return
     end
     if not L.SCRIPT_PATH then
-        L.updateState = "failed"
-        print("[destiny] update: cannot locate local destiny.lua")
+        L.updateState = "failed: no path"
+        print("[destiny] update: cannot locate local destiny.lua (debug.getinfo + GetScriptName both failed)")
+        updateNotify("✖", "Update check failed", "cannot find local destiny.lua", RED)
+        return
+    end
+    if not io then
+        L.updateState = "failed: no io"
+        print("[destiny] update: io library not available in this lmaobox build")
+        updateNotify("✖", "Update check failed", "file access (io) blocked", RED)
         return
     end
 
@@ -778,10 +811,10 @@ function L.doUpdateCheck()
         local ok, f = pcall(io.open, L.SCRIPT_PATH, "rb")
         if ok and f then localContent = f:read("*a"); f:close() end
     end
-    if not localContent then
-        L.updateState = "failed"
+    if not localContent or #localContent < 100 then
+        L.updateState = "failed: read local"
         print("[destiny] update: could not read " .. tostring(L.SCRIPT_PATH))
-        notify("✖", "Update check failed", "could not read local script", RED)
+        updateNotify("✖", "Update check failed", "could not read local script", RED)
         return
     end
 
@@ -790,55 +823,74 @@ function L.doUpdateCheck()
 
     local ok, data = pcall(http.Get, L.UPDATE_URL)
     if not ok or type(data) ~= "string" or data:sub(1, 5) == "ERROR" or #data < 1000 then
-        L.updateState = "failed"
+        L.updateState = "failed: download"
         local why = ok and (type(data) == "string" and data:sub(1, 60) or type(data)) or tostring(data)
         print("[destiny] update: download failed (" .. tostring(why) .. ")")
-        notify("✖", "Update check failed", "could not reach GitHub", RED)
+        updateNotify("✖", "Update check failed", "could not reach GitHub", RED)
         return
     end
 
     if data:sub(1, 2) ~= "--" or not data:find("lmaobox", 1, true) then
-        L.updateState = "failed"
-        print("[destiny] update: response did not look like destiny.lua")
-        notify("✖", "Update check failed", "unexpected response from GitHub", RED)
+        L.updateState = "failed: invalid"
+        print("[destiny] update: response did not look like destiny.lua (" .. data:sub(1, 60) .. ")")
+        updateNotify("✖", "Update check failed", "unexpected response from GitHub", RED)
         return
     end
 
-    -- Safety: if the local file has the updater marker and the remote doesn't, the local file was edited
-    -- by hand and hasn't been pushed yet. Do NOT overwrite it.
+    -- local-only edits are protected: if local has the marker but remote doesn't, keep local
     if localContent:find(L.UPDATE_MARKER, 1, true) and not data:find(L.UPDATE_MARKER, 1, true) then
         L.updateState = "skipped"
-        print("[destiny] update: local is newer than GitHub, skipping")
-        notify("✖", "Update skipped", "your local version is newer than GitHub", RED)
+        print("[destiny] update: local has updater, remote doesn't - local is newer, skipping")
+        updateNotify("✖", "Update skipped", "your local version is newer than GitHub", RED)
         return
     end
 
     if normalizeEOL(data) == normalizeEOL(localContent) then
         L.updateState = "latest"
-        print("[destiny] update: up to date")
-        notify("✓", "Destiny is up to date", "latest version", accent())
+        print("[destiny] update: up to date (" .. #data .. " bytes, identical)")
+        updateNotify("✓", "Destiny is up to date", "latest version", accent())
         return
     end
 
-    local okW, fw = pcall(io.open, L.SCRIPT_PATH, "wb")
+    -- write to a temp file first, then swap it in (safer than overwriting in place)
+    local tmpPath = L.SCRIPT_PATH .. ".new"
+    local okW, fw = pcall(io.open, tmpPath, "wb")
     if not okW or not fw then
-        L.updateState = "failed"
-        print("[destiny] update: could not write " .. tostring(L.SCRIPT_PATH))
-        notify("✖", "Update could not be saved", "file not writable", RED)
+        L.updateState = "failed: write temp"
+        print("[destiny] update: could not write " .. tmpPath)
+        updateNotify("✖", "Update could not be saved", "file not writable", RED)
         return
     end
     local wrote = pcall(function() fw:write(data) end)
     pcall(function() fw:close() end)
     if not wrote then
-        L.updateState = "failed"
-        print("[destiny] update: write failed")
-        notify("✖", "Update could not be saved", "write failed", RED)
+        pcall(os.remove, tmpPath)
+        L.updateState = "failed: write temp"
+        print("[destiny] update: write to temp failed")
+        updateNotify("✖", "Update could not be saved", "write failed", RED)
         return
+    end
+
+    -- swap the temp file in; fall back to direct overwrite if rename isn't allowed
+    local renamed = pcall(os.rename, tmpPath, L.SCRIPT_PATH)
+    if not renamed then
+        local okD, fd = pcall(io.open, L.SCRIPT_PATH, "wb")
+        if okD and fd then
+            pcall(function() fd:write(data) end)
+            pcall(function() fd:close() end)
+        else
+            pcall(os.remove, tmpPath)
+            L.updateState = "failed: swap"
+            print("[destiny] update: rename and direct-write both failed")
+            updateNotify("✖", "Update could not be saved", "file locked", RED)
+            return
+        end
+        pcall(os.remove, tmpPath)
     end
 
     L.updateState = "updated"
     print("[destiny] update: saved " .. #data .. " bytes - please restart destiny lua")
-    notify("↓", "Destiny updated!", "Please restart destiny lua to load the new version", accent())
+    updateNotify("↓", "Destiny updated!", "Please restart destiny lua to load the new version", accent())
 end
 
 -- 6b. sounds
@@ -3758,8 +3810,25 @@ local PAGES = {
     { group = "SYSTEM", icon = "ⓘ", name = "Info", draw = function()
         section("About")
         paraCard("Destiny v1 Visual Lua for LMAOBOX.")
+
+        section("Updates")
+        local state, label, col = L.updateState or "idle", "", T.text2
+        if state == "latest" then label, col = "Up to date", accent()
+        elseif state == "updated" then label, col = "Updated - restart the script", GOLD
+        elseif state == "skipped" then label, col = "Local is newer than GitHub", GOLD
+        elseif state == "checking" then label = "Checking..."
+        elseif state == "idle" then label = "Waiting..." 
+        elseif state:sub(1, 7) == "failed:" then label, col = "Failed - " .. state:sub(9), RED
+        else label = state end
+        infoRow("Status", label)
+        infoRow("Local file", L.SCRIPT_PATH and fit(F.small, L.SCRIPT_PATH, cw * 0.55) or "NOT FOUND")
+        buttonRow("Check for updates now", "Check", function()
+            L.updateDone, L.updateDueAt, L.updateRetries, L.updateNextAt = false, nil, 0, nil
+            notify("↻", "Checking for updates...", nil, accent())
+        end)
     end },
-}
+
+    
 
 local function drawMenu(openT)
     local sw, sh = draw.GetScreenSize()
@@ -3940,6 +4009,13 @@ local function onDraw()
     if not L.updateDone then
         if not L.updateDueAt then L.updateDueAt = now() + 2.5 end
         if now() >= L.updateDueAt then safe("update check", L.doUpdateCheck) end
+    end
+    -- retry twice if the check failed (network blip, temp IO issue, etc.), 20 s apart
+    if L.updateDone and L.updateState:sub(1, 7) == "failed:" and L.updateRetries < 2 then
+        if not L.updateNextAt then L.updateNextAt = now() + 20 end
+        if now() >= L.updateNextAt then
+            L.updateRetries, L.updateNextAt, L.updateDone = L.updateRetries + 1, nil, false
+        end
     end
 
     if menu.openT > 0.01 then
