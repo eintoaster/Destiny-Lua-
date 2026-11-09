@@ -925,6 +925,11 @@ pcall(function()
     end
 end)
 
+-- lmaobox's ASYNC downloads (http.GetAsync) fail above ~20 KB with "WinINet Error Code: 6 /
+-- Network read failed" (the same issue the Paimon installer works around - see section 8d+).
+-- destiny.lua is far bigger than that, so the update check uses the BLOCKING call (http.Get)
+-- instead: it waits for the answer right there in the frame it's called from (a short one-time
+-- pause, same as a Paimon file), which is what actually works for files this size.
 local function updaterCheck()
     if updater.running then return end
     if not http then notify("✖", "Can't check for updates", "lmaobox blocks downloads (http)", RED); return end
@@ -933,33 +938,32 @@ local function updaterCheck()
         return
     end
     updater.running = true
-    local ok, err = pcall(http.GetAsync, UPDATE_URL, function(remote)
-        updater.running = false
-        if type(remote) ~= "string" or remote == "" or remote:sub(1, 5) == "ERROR" then
-            notify("✖", "Update check failed", tostring(remote), RED)
-            return
-        end
-        local okf, f = pcall(io.open, updater.path, "rb")
-        local current = (okf and f) and f:read("*a") or nil
-        if okf and f then f:close() end
-        if current and current == remote then
-            notify("✔", "Destiny is up to date", nil, accent())
-            return
-        end
-        local okw, wf = pcall(io.open, updater.path, "wb")
-        if not okw or not wf then
-            notify("✖", "Update found but couldn't be saved", tostring(okw and wf or "io blocked"), RED)
-            return
-        end
-        wf:write(remote)
-        wf:close()
-        notify("⚡", "Destiny was updated", "Please restart destiny.lua to load it", GOLD)
-        print("[destiny] update downloaded - please restart destiny.lua")
-    end)
+    local ok, remote = pcall(http.Get, UPDATE_URL)
+    updater.running = false
     if not ok then
-        updater.running = false
-        notify("✖", "Can't check for updates", tostring(err), RED)
+        notify("✖", "Can't check for updates", tostring(remote), RED)
+        return
     end
+    if type(remote) ~= "string" or remote == "" or remote:sub(1, 5) == "ERROR" then
+        notify("✖", "Update check failed", tostring(remote), RED)
+        return
+    end
+    local okf, f = pcall(io.open, updater.path, "rb")
+    local current = (okf and f) and f:read("*a") or nil
+    if okf and f then f:close() end
+    if current and current == remote then
+        notify("✔", "Destiny is up to date", nil, accent())
+        return
+    end
+    local okw, wf = pcall(io.open, updater.path, "wb")
+    if not okw or not wf then
+        notify("✖", "Update found but couldn't be saved", tostring(okw and wf or "io blocked"), RED)
+        return
+    end
+    wf:write(remote)
+    wf:close()
+    notify("⚡", "Destiny was updated", "Please restart destiny.lua to load it", GOLD)
+    print("[destiny] update downloaded - please restart destiny.lua")
 end
 
 ---------------------------------------------------------------------------
