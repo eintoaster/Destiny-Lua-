@@ -914,14 +914,34 @@ local UPDATE_DELAY = 3                                  -- seconds after load be
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 
--- the full path to this very file (same trick used for LUA_DIR above, but keeping the filename this time)
+-- the full ABSOLUTE path to this very file. debug.getinfo / GetScriptName can give just "destiny.lua"
+-- (relative), and writing that goes into the TF2 folder instead of %LOCALAPPDATA%\lua - so every candidate
+-- must be absolute AND must really exist on disk, otherwise the next one is tried.
+local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
+local function fileExists(p)
+    local ok, f = pcall(io.open, p, "rb")
+    if ok and f then f:close(); return true end
+    return false
+end
 pcall(function()
+    local cands, base = {}, nil
+    local ok2, name = pcall(GetScriptName)
+    if ok2 and name and tostring(name) ~= "" then cands[#cands + 1] = tostring(name) end
     local ok, info = pcall(debug.getinfo, 1, "S")
     local src = ok and info and info.source or ""
-    updater.path = src:match("^@?(.*)$")
-    if not updater.path or updater.path == "" then
-        local ok2, name = pcall(GetScriptName)
-        updater.path = ok2 and tostring(name) or nil
+    if #src < 300 and src:sub(1, 1) == "@" then cands[#cands + 1] = src:sub(2) end
+    local la = os.getenv and os.getenv("LOCALAPPDATA")
+    for _, c in ipairs(cands) do
+        base = base or c:match("([^\\/]+)$")
+        if isAbs(c) and fileExists(c) then updater.path = c; return end
+    end
+    base = (base and base:lower():match("%.lua$")) and base or "destiny.lua"
+    if la then
+        for _, nm in ipairs({ base, "destiny.lua" }) do
+            local c = la .. "\\lua\\" .. nm
+            if fileExists(c) then updater.path = c; return end
+        end
+        updater.path = la .. "\\lua\\" .. base      -- last resort: the standard lmaobox folder
     end
 end)
 
@@ -956,7 +976,7 @@ local function updaterCheck()
     local current = (okf and f) and f:read("*a") or nil
     if okf and f then f:close() end
     if current and current == remote then
-        notify("✔", "Destiny is up to date", nil, accent())
+        notify("✔", "Destiny is up to date", tostring(updater.path), accent())
         return
     end
     local okw, wf = pcall(io.open, updater.path, "wb")
@@ -966,7 +986,16 @@ local function updaterCheck()
     end
     wf:write(remote)
     wf:close()
+    -- read it back to be sure the real file now holds the new version
+    local okr, rf = pcall(io.open, updater.path, "rb")
+    local back = (okr and rf) and rf:read("*a") or nil
+    if okr and rf then rf:close() end
+    if back ~= remote then
+        notify("✖", "Update was written but verification failed", updater.path, RED)
+        return
+    end
     notify("⚡", "Destiny was updated", "Please restart destiny.lua to load it", GOLD)
+    print("[destiny] updated: " .. tostring(updater.path))
     print("[destiny] update downloaded - please restart destiny.lua")
 end
 
@@ -3936,7 +3965,7 @@ local PAGES = {
     end },
     { group = "SYSTEM", icon = "ⓘ", name = "Info", draw = function()
         section("About")
-        paraCard("Destiny v1 Visual Lua  22for LMAOBOX.")
+        paraCard("Destiny v1 Visual Lua for LMAOBOX.")
         buttonRow("Check for updates", updater.running and "Checking..." or "Check", function() updaterCheck() end)
     end },
 }
