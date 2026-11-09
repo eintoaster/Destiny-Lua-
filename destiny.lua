@@ -995,10 +995,35 @@ local function updaterCheck()
         local okr = pcall(os.rename, updater.path, updater.path .. ".old")
         if okr then tryOpen(updater.path, "after rename") end
     end
+    if not wf and UnloadScript and LoadScript then
+        -- last resort: lmaobox may keep the loaded file locked. Unload ourselves, write the file, load it again.
+        -- (the old file is untouched if opening for writing fails, so it is simply loaded back in that case)
+        local path = updater.path
+        pcall(UnloadScript, path)
+        local ok, f, err = pcall(io.open, path, "wb")
+        if ok and f then
+            local okw = pcall(f.write, f, remote)
+            f:close()
+            local okr, rf = pcall(io.open, path, "rb")
+            local back = (okr and rf) and rf:read("*a") or nil
+            if okr and rf then rf:close() end
+            pcall(LoadScript, path)
+            if okw and back == remote then return end      -- this running copy is gone; the new one has started
+        else
+            errs[#errs + 1] = "unload: " .. tostring(ok and (err or "nil") or f)
+            pcall(LoadScript, path)
+        end
+    end
     if not wf then
         local msg = table.concat(errs, " | ")
-        print("[destiny] update save failed for " .. tostring(updater.path) .. " -> " .. msg)
-        notify("✖", "Update found but couldn't be saved", msg ~= "" and msg or tostring(updater.path), RED)
+        -- diagnose: can this folder take ANY new file? (separates "folder blocked" from "this file locked")
+        local dir = updater.path:match("^(.*[\\/])") or ""
+        local okd, df = pcall(io.open, dir .. "destiny_write_test.tmp", "w")
+        local dirOk = okd and df ~= nil and df ~= false
+        if dirOk then df:write("ok"); df:close(); pcall(os.remove, dir .. "destiny_write_test.tmp") end
+        local short = (dirOk and "folder OK, file locked" or "folder blocked") .. " | " .. msg:sub(1, 70)
+        print("[destiny] update save failed for " .. tostring(updater.path) .. " -> " .. msg .. " | folder writable: " .. tostring(dirOk))
+        notify("✖", "Update found but couldn't be saved", short, RED)
         return
     end
     updater.path = usedPath
