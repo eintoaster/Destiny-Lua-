@@ -910,10 +910,6 @@ end
 -- says "up to date". If it's different, it overwrites this very file on disk and tells you to restart
 -- destiny.lua so lmaobox picks up the new version (a running script can't reload itself).
 local UPDATE_URL = "https://raw.githubusercontent.com/eintoaster/Destiny-Lua-/refs/heads/main/destiny.lua"
--- THE VERSION OF THIS FILE. Raise it every time you push a new destiny.lua to GitHub (any text works, e.g.
--- "1.0.1"): the updater compares this with the version line in the GitHub file. (lmaobox doesn't let scripts
--- READ files outside the TF2 folder either, so comparing with destiny.lua on disk always looked "different".)
-local DESTINY_VERSION = "1.1.1"
 local UPDATE_DELAY = 3                                  -- seconds after load before the check fires
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
@@ -962,31 +958,33 @@ local function updaterCheck()
         return
     end
     updater.running = true
-    -- raw.githubusercontent.com keeps serving a cached copy for ~5 minutes after a push, and ignores "?t=..."
-    -- on the end. So: ask the GitHub API for the newest commit id, then download the file AT that commit
-    -- (a fixed commit never changes, so it can never be a stale copy). Falls back to the normal address.
-    local url = UPDATE_URL
+    -- Automatic: GitHub gives every push its own commit id. The id of the installed version is kept in
+    -- destiny_files/destiny_installed.txt (inside the TF2 folder, which lmaobox lets us read and write).
+    -- Newest id on GitHub == that id -> up to date. Different (or no file yet) -> download the file AT that
+    -- commit (a fixed commit never changes, so it can't be an old cached copy) and install it.
     local okA, api = pcall(http.Get, "https://api.github.com/repos/eintoaster/Destiny-Lua-/commits/main")
     local sha = okA and type(api) == "string" and api:match('"sha"%s*:%s*"(%x+)"')
-    if sha then url = "https://raw.githubusercontent.com/eintoaster/Destiny-Lua-/" .. sha .. "/destiny.lua" end
-    local ok, remote = pcall(http.Get, url)
+    if not sha then
+        updater.running = false
+        notify("✖", "Can't check for updates", "GitHub didn't answer: " .. tostring(api):sub(1, 60), RED)
+        return
+    end
+    local installed = nil
+    local okI, fi = pcall(io.open, "destiny_files/destiny_installed.txt", "r")
+    if okI and fi then installed = (fi:read("*a") or ""):match("%x+"); fi:close() end
+    if installed == sha then
+        updater.running = false
+        notify("✔", "Destiny is up to date", "version " .. sha:sub(1, 7), accent())
+        return
+    end
+    local ok, remote = pcall(http.Get, "https://raw.githubusercontent.com/eintoaster/Destiny-Lua-/" .. sha .. "/destiny.lua")
     updater.running = false
     if not ok then
         notify("✖", "Can't check for updates", tostring(remote), RED)
         return
     end
-    if type(remote) ~= "string" or remote == "" or remote:sub(1, 5) == "ERROR" then
-        notify("✖", "Update check failed", tostring(remote), RED)
-        return
-    end
-    -- compare versions: the one written in the GitHub file vs the one of this running script
-    local remoteVersion = remote:match('local%s+DESTINY_VERSION%s*=%s*"([^"]+)"')
-    if not remoteVersion then
-        notify("✖", "Update check failed", "the GitHub file has no DESTINY_VERSION line", RED)
-        return
-    end
-    if remoteVersion == DESTINY_VERSION then
-        notify("✔", "Destiny is up to date", "version " .. DESTINY_VERSION, accent())
+    if type(remote) ~= "string" or #remote < 10000 or remote:sub(1, 5) == "ERROR" then
+        notify("✖", "Update check failed", tostring(remote):sub(1, 60), RED)
         return
     end
     -- Write the download to a temp file, check it, move the old script aside, rename the temp file into
@@ -1026,7 +1024,9 @@ local function updaterCheck()
     end
     pcall(os.remove, old)
     updater.path = path
-    notify("⚡", "Destiny updated to " .. remoteVersion, "Please restart destiny.lua to load it", GOLD)
+    local okS, fs = pcall(io.open, "destiny_files/destiny_installed.txt", "w")
+    if okS and fs then fs:write(sha); fs:close() end
+    notify("⚡", "Destiny was updated (" .. sha:sub(1, 7) .. ")", "Please restart destiny.lua to load it", GOLD)
     print("[destiny] updated: " .. tostring(path))
 end
 
@@ -3996,8 +3996,8 @@ local PAGES = {
     end },
     { group = "SYSTEM", icon = "ⓘ", name = "Info", draw = function()
         section("About")
-        paraCard("Destiny v1 Visual Lua for lll LMAOBOX.")
-        buttonRow("Check for updates (this is version " .. DESTINY_VERSION .. ")", updater.running and "Checking..." or "Check", function() updaterCheck() end)
+        paraCard("Destiny v1 Visual Lua for LMAOBOX.")
+        buttonRow("Check for updates", updater.running and "Checking..." or "Check", function() updaterCheck() end)
     end },
 }
 
