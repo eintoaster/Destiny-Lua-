@@ -44,38 +44,128 @@ end
 
 local LUA_DIR, DIR = "", nil
 L.SCRIPT_PATH = nil
-pcall(function()
-    local ok, info = pcall(debug.getinfo, 1, "S")
-    local src = ok and info and info.source or ""
-    L.SCRIPT_PATH = src:match("^@(.+)$")
-    LUA_DIR = src:match("^@?(.*[\\/])")
-    if not LUA_DIR then
-        local ok2, name = pcall(GetScriptName)
-        if ok2 and name then
-            local n = tostring(name)
-            LUA_DIR = n:match("^(.*[\\/])")
-            if not L.SCRIPT_PATH and n ~= "" then L.SCRIPT_PATH = n end
-        end
-    end
-    if not LUA_DIR then
-        local ok3, la = pcall(os.getenv, "LOCALAPPDATA")
-        LUA_DIR = (ok3 and la) and (la .. "\\lua\\") or ""
-    end
-end)
 
--- fallback: if the path wasn't detected above, look for destiny.lua in the script's own folder
-if not L.SCRIPT_PATH and LUA_DIR and LUA_DIR ~= "" then
-    local guess = LUA_DIR .. "destiny.lua"
-    local ok, f = pcall(io.open, guess, "rb")
-    if ok and f then f:close(); L.SCRIPT_PATH = guess end
+-- Optional manual override:
+-- If automatic detection still fails, put the FULL path to destiny.lua here.
+-- Example: "C:\\Users\\YourWindowsName\\AppData\\Local\\lua\\scripts\\destiny.lua"
+local SCRIPT_PATH_OVERRIDE = ""
+
+local function fileExists(path)
+    if not path or path == "" or not io or not io.open then return false end
+    local ok, f = pcall(io.open, path, "rb")
+    if ok and f then f:close(); return true end
+    return false
 end
--- also try the TF2 folder and the localappdata\lua folder
-if not L.SCRIPT_PATH then
-    for _, c in ipairs({ "destiny.lua", "destiny_files\\destiny.lua" }) do
-        local ok, f = pcall(io.open, c, "rb")
-        if ok and f then f:close(); L.SCRIPT_PATH = c; break end
+
+local function acceptScriptPath(path)
+    if type(path) ~= "string" then return false end
+    path = path:gsub("^@", ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if path == "" or path:find("^%[") then return false end
+
+    -- GetScriptName may return only a filename. Keep it as a candidate;
+    -- directory-based checks below will resolve it when possible.
+    if fileExists(path) then
+        L.SCRIPT_PATH = path
+        LUA_DIR = path:match("^(.*[\\/])") or ""
+        return true
+    end
+    return false
+end
+
+-- 1. Explicit path takes priority. This is the reliable fallback on builds
+-- where the script host hides the executing file's source path.
+if SCRIPT_PATH_OVERRIDE ~= "" then
+    acceptScriptPath(SCRIPT_PATH_OVERRIDE)
+end
+
+-- 2. Try the executing chunk's source path.
+if not L.SCRIPT_PATH and debug and debug.getinfo then
+    pcall(function()
+        for lvl = 1, 16 do
+            local info = debug.getinfo(lvl, "S")
+            if info and info.source then
+                local source = tostring(info.source)
+                if source:sub(1, 1) == "@" then
+                    source = source:sub(2)
+                end
+                if acceptScriptPath(source) then break end
+            end
+        end
+    end)
+end
+
+-- 3. Try the host's script-name function.
+local scriptName
+if not L.SCRIPT_PATH and type(GetScriptName) == "function" then
+    local ok, name = pcall(GetScriptName)
+    if ok and name then
+        scriptName = tostring(name):gsub("^@", "")
+        acceptScriptPath(scriptName)
     end
 end
+
+-- 4. Build likely script folders from this Windows account, without
+-- assuming a particular username or a particular Lmaobox install folder.
+local searchDirs = {}
+local function addDir(dir)
+    if type(dir) == "string" and dir ~= "" then
+        dir = dir:gsub("[\\/]+$", "") .. "\\"
+        for _, existing in ipairs(searchDirs) do
+            if existing:lower() == dir:lower() then return end
+        end
+        searchDirs[#searchDirs + 1] = dir
+    end
+end
+
+if os and os.getenv then
+    local localAppData = os.getenv("LOCALAPPDATA")
+    local userProfile = os.getenv("USERPROFILE")
+    if localAppData and localAppData ~= "" then
+        addDir(localAppData .. "\\lua")
+        addDir(localAppData .. "\\lua\\scripts")
+        addDir(localAppData .. "\\Lmaobox\\scripts")
+        addDir(localAppData .. "\\Lmaobox\\lua")
+    end
+    if userProfile and userProfile ~= "" then
+        addDir(userProfile .. "\\AppData\\Local\\lua")
+        addDir(userProfile .. "\\AppData\\Local\\lua\\scripts")
+        addDir(userProfile .. "\\AppData\\Local\\Lmaobox\\scripts")
+    end
+end
+addDir("")
+
+-- 5. Resolve a filename returned by GetScriptName against likely folders.
+local fileCandidates = { "destiny.lua", "destiny 33.lua", "destiny 2.lua" }
+if scriptName and scriptName ~= "" then
+    local baseName = scriptName:match("([^\\/]+)$") or scriptName
+    table.insert(fileCandidates, 1, baseName)
+end
+
+if not L.SCRIPT_PATH then
+    for _, dir in ipairs(searchDirs) do
+        for _, filename in ipairs(fileCandidates) do
+            local candidate = dir .. filename
+            if acceptScriptPath(candidate) then break end
+        end
+        if L.SCRIPT_PATH then break end
+    end
+end
+
+-- Keep a usable config directory even if the host does not expose the
+-- script's full path. This does NOT pretend that the updater found the file.
+if not LUA_DIR or LUA_DIR == "" then
+    if os and os.getenv then
+        local localAppData = os.getenv("LOCALAPPDATA")
+        if localAppData and localAppData ~= "" then
+            LUA_DIR = localAppData .. "\\lua\\"
+        else
+            LUA_DIR = ""
+        end
+    else
+        LUA_DIR = ""
+    end
+end
+
 -- diagnostic so you can check the console on load
 print("[destiny] script path: " .. tostring(L.SCRIPT_PATH or "<NOT FOUND - updater cannot work>"))
 
@@ -795,8 +885,8 @@ function L.doUpdateCheck()
     end
     if not L.SCRIPT_PATH then
         L.updateState = "failed: no path"
-        print("[destiny] update: cannot locate local destiny.lua (debug.getinfo + GetScriptName both failed)")
-        updateNotify("✖", "Update check failed", "cannot find local destiny.lua", RED)
+        print("[destiny] update: cannot locate local script file")
+        updateNotify("✖", "Update check failed", "set SCRIPT_PATH_OVERRIDE in destiny.lua", RED)
         return
     end
     if not io then
@@ -821,7 +911,11 @@ function L.doUpdateCheck()
     L.updateState = "checking"
     print("[destiny] update: checking " .. L.UPDATE_URL)
 
-    local ok, data = pcall(http.Get, L.UPDATE_URL)
+    -- Try cache-busted URL first, then fallback to standard URL
+    local ok, data = pcall(http.Get, L.UPDATE_URL .. "?t=" .. tostring(round(now() * 1000)))
+    if not ok or type(data) ~= "string" or data:sub(1, 5) == "ERROR" or #data < 1000 then
+        ok, data = pcall(http.Get, L.UPDATE_URL)
+    end
     if not ok or type(data) ~= "string" or data:sub(1, 5) == "ERROR" or #data < 1000 then
         L.updateState = "failed: download"
         local why = ok and (type(data) == "string" and data:sub(1, 60) or type(data)) or tostring(data)
@@ -837,20 +931,19 @@ function L.doUpdateCheck()
         return
     end
 
-    -- local-only edits are protected: if local has the marker but remote doesn't, keep local
-    if localContent:find(L.UPDATE_MARKER, 1, true) and not data:find(L.UPDATE_MARKER, 1, true) then
-        L.updateState = "skipped"
-        print("[destiny] update: local has updater, remote doesn't - local is newer, skipping")
-        updateNotify("✖", "Update skipped", "your local version is newer than GitHub", RED)
-        return
-    end
-
     if normalizeEOL(data) == normalizeEOL(localContent) then
         L.updateState = "latest"
         print("[destiny] update: up to date (" .. #data .. " bytes, identical)")
-        updateNotify("✓", "Destiny is up to date", "latest version", accent())
+        updateNotify("✓", "Destiny is up to date", "latest update", accent())
         return
     end
+
+    -- Backup old version first
+    local bakPath = L.SCRIPT_PATH .. ".bak"
+    pcall(function()
+        local fb = io.open(bakPath, "wb")
+        if fb then fb:write(localContent); fb:close() end
+    end)
 
     -- write to a temp file first, then swap it in (safer than overwriting in place)
     local tmpPath = L.SCRIPT_PATH .. ".new"
@@ -889,8 +982,8 @@ function L.doUpdateCheck()
     end
 
     L.updateState = "updated"
-    print("[destiny] update: saved " .. #data .. " bytes - please restart destiny lua")
-    updateNotify("↓", "Destiny updated!", "Please restart destiny lua to load the new version", accent())
+    print("[destiny] update: saved " .. #data .. " bytes - pls restart destiny lua")
+    updateNotify("↓", "Destiny updated!", "pls restart destiny lua", accent())
 end
 
 -- 6b. sounds
@@ -3823,12 +3916,11 @@ local PAGES = {
         infoRow("Status", label)
         infoRow("Local file", L.SCRIPT_PATH and fit(F.small, L.SCRIPT_PATH, cw * 0.55) or "NOT FOUND")
         buttonRow("Check for updates now", "Check", function()
-            L.updateDone, L.updateDueAt, L.updateRetries, L.updateNextAt = false, nil, 0, nil
+            L.updateDone, L.updateDueAt, L.updateRetries, L.updateNextAt = false, now(), 0, nil
             notify("↻", "Checking for updates...", nil, accent())
         end)
     end },
-
-    
+}
 
 local function drawMenu(openT)
     local sw, sh = draw.GetScreenSize()
