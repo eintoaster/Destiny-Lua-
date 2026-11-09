@@ -17,7 +17,34 @@ local C_BLACK, C_WHITE = { 0, 0, 0 }, { 255, 255, 255 }
 -- fixed lists and a few state values live in one table
 local L = {}
 -- cleanup: lmaobox's draw calls leave ~250 bytes of garbage each
-pcall(collectgarbage, "incremental", 200, 100)
+pcall(collectgarbage, "generational", 20, 100)                     -- (draw.Color garbage dies young: cheap small cleanups)
+pcall(collectgarbage, "restart")                                   -- (Lua's own cleanup; destiny no longer drives it)
+function L.gcStep()
+    if L.gcOff then return end
+    local t0 = L.clock and L.clock() or 0
+    local ok, err = pcall(L.gcStepInner)
+    L.gcMs = ((L.clock and L.clock() or 0) - t0) * 1000
+    if not ok then                                                  -- lmaobox refuses it: back to Lua's own cleanup
+        L.gcOff = true
+        pcall(collectgarbage, "restart")
+        print("[destiny] own memory cleanup not allowed (" .. tostring(err) .. "), using the normal one")
+    end
+end
+function L.gcStepInner()
+    local kb = collectgarbage("count")
+    local made = kb - (L.gcLast or kb)
+    if made < 0 then made = 0 end
+    -- many tiny steps instead of one big one (one big step did a whole sweep at once = 25-50 ms spikes),
+    -- at most ~2 ms per frame (more only if memory gets really big)
+    local want = made * 2 + 64
+    local budget = (kb > 150000) and 0.006 or 0.002
+    local t0, done = L.clock(), 0
+    while done < want and (L.clock() - t0) < budget do
+        if collectgarbage("step", 32) then break end                    -- (true = a cleanup round just finished)
+        done = done + 32
+    end
+    L.gcLast = collectgarbage("count")
+end
 
 -- memory readout for the Info page
 local perf = { kb = 0, rate = 0, lastKb = nil, at = 0, made = 0 }
@@ -90,6 +117,7 @@ local DEFAULTS = {
     slot = 1,
     -- menu key
     menuKey = 1,
+    gcMode = 1,                                                        -- (memory cleanup: 1 generational, 2 normal)
 }
 
 -- keys that can open the destiny menu
@@ -330,10 +358,18 @@ local F = {
 }
 
 -- draw.Color only takes whole numbers 0..255
-local function color(c, a)
-    draw.Color(clamp(round(c[1]), 0, 255), clamp(round(c[2]), 0, 255), clamp(round(c[3]), 0, 255),
-               clamp(round((a or 255) * ALPHA), 1, 255))
+-- draw.Color leaves ~224 bytes of garbage per call (the cause of the lag spikes), so it is only called when the
+-- colour really changes. L.ccOk = false forces the next call (start of a frame, after a texture was made).
+local function rawColor(r, g, b, al)
+    if L.ccOk and r == L.cr and g == L.cg and b == L.cb and al == L.ca then return end
+    L.cr, L.cg, L.cb, L.ca, L.ccOk = r, g, b, al, true
+    draw.Color(r, g, b, al)
 end
+local function color(c, a)
+    rawColor(clamp(round(c[1]), 0, 255), clamp(round(c[2]), 0, 255), clamp(round(c[3]), 0, 255), clamp(round((a or 255) * ALPHA), 1, 255))
+end
+-- making a texture makes lmaobox forget the colour ("Color not set" on the next draw): set it again
+function L.recolor() if L.cr then L.ccOk = false; rawColor(L.cr, L.cg, L.cb, L.ca) end end
 
 -- nothing to draw when it would be invisible anyway
 local function hidden(a) return (a or 255) * ALPHA < 1 end
@@ -365,6 +401,7 @@ local function makeTex(key, S, alphaAt)
         end
     end
     t = { id = draw.CreateTextureRGBA(table.concat(px), S, S), S = S }
+    L.recolor()
     shapeTex[key] = t
     return t
 end
@@ -452,8 +489,9 @@ function L.makeBox(outline, w, h, r)
     local pad = string.rep(L.T0, Sw)
     for _ = h, Sh - 1 do rows[#rows + 1] = pad end
     local ok, id = pcall(draw.CreateTextureRGBA, table.concat(rows), Sw, Sh)
+    L.recolor()
     if not ok or not id then return false end
-    return { id = id, U = w / Sw, V = h / Sh }
+    return { id = id, U = w / Sw, V = h / Sh, Sw = Sw, Sh = Sh }
 end
 
 -- the picture for this box
@@ -485,13 +523,10 @@ function L.boxFrame()
     if now() - L.boxCountAt > 5 then L.boxCount, L.boxCountAt = {}, now() end
 end
 
+-- the picture is drawn at its full size: the box sits in its top-left corner and the rest is see-through,
+-- so no corner list has to be handed over (TexturedPolygon with a table each call made a lot of garbage)
 local function drawBox(e, x, y, w, h)
-    local q = L.boxQuad
-    q[1][1], q[1][2], q[1][3], q[1][4] = x, y, 0, 0
-    q[2][1], q[2][2], q[2][3], q[2][4] = x + w, y, e.U, 0
-    q[3][1], q[3][2], q[3][3], q[3][4] = x + w, y + h, e.U, e.V
-    q[4][1], q[4][2], q[4][3], q[4][4] = x, y + h, 0, e.V
-    draw.TexturedPolygon(e.id, q, false)
+    draw.TexturedRect(e.id, x, y, x + e.Sw, y + e.Sh)
 end
 
 -- filled rounded rectangle
@@ -502,6 +537,7 @@ local function roundRect(x, y, w, h, r, c, a)
     color(c, a)
     if r < 1 then draw.FilledRect(x, y, x + w, y + h); return end
     local e = L.boxGet(false, w, h, r)
+    color(c, a)                                                       -- (again: making a picture can reset it)
     if e then drawBox(e, x, y, w, h); return end
     draw.FilledRect(x + r, y, x + w - r, y + h)
     draw.FilledRect(x, y + r, x + r, y + h - r)
@@ -516,6 +552,7 @@ local function roundRectLine(x, y, w, h, r, c, a)
     r = min(round(r), floor(h / 2), floor(w / 2))
     color(c, a)
     local e = L.boxGet(true, w, h, r)
+    color(c, a)
     if e then drawBox(e, x, y, w, h); return end
     draw.FilledRect(x + r, y, x + w - r, y + 1)
     draw.FilledRect(x + r, y + h - 1, x + w - r, y + h)
@@ -529,8 +566,8 @@ end
 local function disc(cx, cy, r, c, a)
     r = round(r)
     if r <= 0 or hidden(a) then return end
-    color(c, a)
     local t, tr = circleTex(r)
+    color(c, a)                                                       -- (after: making the circle can reset it)
     local half = t.S / 2 * r / tr
     cx, cy = round(cx), round(cy)
     draw.TexturedRect(t.id, round(cx - half), round(cy - half), round(cx + half), round(cy + half))
@@ -564,7 +601,7 @@ local function edgeFade(side, size, c, a)
     size = round(size)
     a = clamp(round(a * ALPHA), 0, 255)
     if a <= 0 or size <= 0 then return end
-    draw.Color(clamp(round(c[1]), 0, 255), clamp(round(c[2]), 0, 255), clamp(round(c[3]), 0, 255), 255)
+    rawColor(clamp(round(c[1]), 0, 255), clamp(round(c[2]), 0, 255), clamp(round(c[3]), 0, 255), 255)
     if side == "top" then draw.FilledRectFade(0, 0, sw, size, a, 0, false)
     elseif side == "bottom" then draw.FilledRectFade(0, sh - size, sw, sh, 0, a, false)
     elseif side == "left" then draw.FilledRectFade(0, 0, size, sh, a, 0, true)
@@ -1370,7 +1407,7 @@ local function drawInputMonitor()
         elseif style == 4 then
             roundRect(kx, ky, kw, kh, 6, L.IMSL_KEY, 235)
             if tt > 0.02 then
-                draw.Color(round(acc[1]), round(acc[2]), round(acc[3]), 255)
+                rawColor(round(acc[1]), round(acc[2]), round(acc[3]), 255)
                 draw.FilledRectFade(round(kx + 1), round(ky + 1), round(kx + kw - 1), round(ky + kh - 1),
                     clamp(round(110 * tt * ALPHA), 0, 255), 0, true)
                 rect(kx, ky + 5, 2, kh - 10, acc, 255 * tt)
@@ -1711,7 +1748,7 @@ L.PLINES = {
 }
 
 -- the 111 files to download: { file in the repo, path, kind }
-P.MIRRORS = { "https://cdn.jsdelivr.net/gh/eintoaster/paimon@main/", "https://raw.githubusercontent.com/eintoaster/paimon/main/" }
+P.MIRRORS = { "https://raw.githubusercontent.com/eintoaster/paimon/main/", "https://cdn.jsdelivr.net/gh/eintoaster/paimon@main/" }   -- (GitHub first: jsDelivr can keep old copies for days)
 function P.files()
     if P.list then return P.list end
     local l = {}
@@ -1729,6 +1766,16 @@ local function fileExists(path)
 end
 
 -- installed = the last frame
+-- installed with the padded 512x512 frames? (older installs get an "Update" button)
+function P.isV2()
+    if P.v2 == nil then
+        local ok, f = pcall(io.open, "destiny_files/paimon/frames_v2.txt", "r")
+        P.v2 = (ok and f) and true or false
+        if ok and f then f:close() end
+    end
+    return P.v2
+end
+
 function P.installed()
     if P.installedCache == nil then
         P.installedCache = fileExists("destiny_files/paimon/frames/frame_52.png")
@@ -1817,7 +1864,11 @@ function P.finish()
     P.installedCache = nil
     P.unloadTextures()
     P.voiceLen, P.fontId = {}, nil
-    if P.failed == 0 then notify("✔", "Paimon installed", P.done .. " files downloaded", accent())
+    if P.failed == 0 then
+        local okM, fm = pcall(io.open, "destiny_files/paimon/frames_v2.txt", "w")      -- (padded 512x512 frames)
+        if okM and fm then fm:write("1"); fm:close() end
+        P.v2 = true
+        notify("✔", "Paimon installed", P.done .. " files downloaded", accent())
     else
         notify("✖", "Paimon: " .. P.failed .. " files failed", tostring(P.lastFail) .. ": " .. tostring(P.why), RED)
         print("[destiny] Paimon install: " .. P.failed .. " failed, last " .. tostring(P.lastFail) .. " (" .. tostring(P.why) .. ")")
@@ -1901,6 +1952,7 @@ function P.loadSome()
     local n = 0
     while P.loaded < 53 and n < 4 do
         local ok, id = pcall(draw.CreateTexture, P.frameDir() .. P.loaded .. ".png")
+        L.recolor()
         P.tex[P.loaded] = ok and id or false
         P.loaded = P.loaded + 1
         n = n + 1
@@ -2325,6 +2377,7 @@ function L.scanlines(c, a)
             px[#px + 1] = p; px[#px + 1] = p
         end
         L.scanTex = draw.CreateTextureRGBA(table.concat(px), 2, 256)
+        L.recolor()
     end
     local sw, sh = draw.GetScreenSize()
     color(c, a)
@@ -2641,7 +2694,7 @@ function L.drawExtraEffect()
         end
         local sy = H * easeOut(el / (st.dur * 0.7))
         color(c1, 90 * fade)
-        draw.Color(round(c1[1]), round(c1[2]), round(c1[3]), 255)
+        rawColor(round(c1[1]), round(c1[2]), round(c1[3]), 255)
         draw.FilledRectFade(0, round(sy - 40 * k), W, round(sy), 0, clamp(round(90 * fade * ALPHA), 0, 255), false)
     end
     ALPHA = keep
@@ -2809,9 +2862,9 @@ function L.drawHud()
         rect(x + 6, y + 6, cw - 12, ch - 12, L.SKBG, 245)
         local w1 = floor((cw - 14) / 2)
         color(L.SKB, 255); draw.FilledRect(x + 7, y + 7, x + 7 + w1, y + 8)
-        draw.Color(L.SKP[1], L.SKP[2], L.SKP[3], 255); draw.FilledRectFade(x + 7, y + 7, x + 7 + w1, y + 8, 0, 255, true)
+        rawColor(L.SKP[1], L.SKP[2], L.SKP[3], 255); draw.FilledRectFade(x + 7, y + 7, x + 7 + w1, y + 8, 0, 255, true)
         color(L.SKP, 255); draw.FilledRect(x + 7 + w1, y + 7, x + cw - 7, y + 8)
-        draw.Color(L.SKY[1], L.SKY[2], L.SKY[3], 255); draw.FilledRectFade(x + 7 + w1, y + 7, x + cw - 7, y + 8, 0, 255, true)
+        rawColor(L.SKY[1], L.SKY[2], L.SKY[3], 255); draw.FilledRectFade(x + 7 + w1, y + 7, x + cw - 7, y + 8, 0, 255, true)
         if #rows == 0 then text(F.sk, "nothing running", x + 10, y + 11, 15, L.SKG)
         else
             for i, r in ipairs(rows) do
@@ -2938,7 +2991,7 @@ function L.drawHud()
             local tt = anim("slh" .. r.name, r.on and 1 or 0, 12)
             if tt > 0.02 then
                 color(ac, 255)
-                draw.Color(round(ac[1]), round(ac[2]), round(ac[3]), 255)
+                rawColor(round(ac[1]), round(ac[2]), round(ac[3]), 255)
                 draw.FilledRectFade(round(x + 6), round(ry), round(x + bw * 0.7), round(ry + 22), clamp(round(70 * tt * ALPHA), 0, 255), 0, true)
                 rect(x + 6, ry + 3, 2, 16, ac, 255 * tt)
             end
@@ -3518,7 +3571,7 @@ L.HUE = { { 255, 0, 0 }, { 255, 255, 0 }, { 0, 255, 0 }, { 0, 255, 255 }, { 0, 0
 L.SWATCHES = { "10B981", "7C6CFF", "E8456F", "FF7A18", "38BDF8", "FACC15", "FFFFFF", "FF2D55" }
 
 local function fadeRect(x, y, w, h, c, a1, a2, horizontal)
-    draw.Color(round(c[1]), round(c[2]), round(c[3]), 255)
+    rawColor(round(c[1]), round(c[2]), round(c[3]), 255)
     draw.FilledRectFade(round(x), round(y), round(x + w), round(y + h),
         clamp(round(a1 * ALPHA), 0, 255), clamp(round(a2 * ALPHA), 0, 255), horizontal)
 end
@@ -3709,6 +3762,40 @@ end
 L.SLOTS = { "Slot 1", "Slot 2", "Slot 3", "Slot 4", "Slot 5" }
 L.COLOR_KEYS = { "colAccent", "colWin", "colSide", "colCard", "colText", "colText2", "colBorder", "colSwitch" }
 
+-- garbage test: each lmaobox call 200 times off-screen, bytes of garbage left per call (once a second, Info page)
+L.GC_MODES = { "Generational (small, frequent)", "Normal (big, rare)" }
+L.PROBES = {
+    { "draw.Color", function() draw.Color(255, 255, 255, 1) end },
+    { "draw.FilledRect", function() draw.FilledRect(-50, -50, -49, -49) end },
+    { "draw.TexturedRect", function() draw.TexturedRect(WHITE, -50, -50, -49, -49) end },
+    { "draw.SetFont", function() draw.SetFont(F.small) end },
+    { "draw.GetTextSize", function() draw.GetTextSize("probe") end },
+    { "draw.Text", function() draw.Text(-200, -200, "probe") end },
+    { "draw.Line", function() draw.Line(-50, -50, -49, -49) end },
+    { "draw.OutlinedCircle", function() draw.OutlinedCircle(-50, -50, 5, 12) end },
+    { "input.IsButtonDown", function() input.IsButtonDown(MOUSE_LEFT) end },
+    { "input.GetMousePos", function() input.GetMousePos() end },
+    { "globals.RealTime", function() globals.RealTime() end },
+    { "nothing (baseline)", function() end },
+}
+L.probeAt = 0
+function L.runProbe()
+    if now() - L.probeAt < 1 then return end
+    L.probeAt = now()
+    draw.Color(255, 255, 255, 1)
+    for _, p in ipairs(L.PROBES) do
+        local best = nil
+        for _ = 1, 3 do                                        -- 3 tries, the lowest (a cleanup can run mid-test)
+            local m0 = collectgarbage("count")
+            for _ = 1, 200 do p[2]() end
+            local b = (collectgarbage("count") - m0) * 1024 / 200
+            if b >= 0 and (not best or b < best) then best = b end
+        end
+        p[3] = best or 0
+    end
+    L.ccOk = false
+end
+
 -- pages ---------------------------------------------------------------------------
 local PAGES = {
     { group = "VISUALS", icon = "◷", name = "Watermark", draw = function()
@@ -3873,8 +3960,12 @@ local PAGES = {
         if P.state == "downloading" then
             infoRow("Installing Paimon", string.format("%d / %d  -  %s", P.done + P.failed, P.TOTAL, P.current))
         else
-            buttonRow(P.installed() and "Paimon is installed" or "Install Paimon (about 75 MB, the game pauses briefly per file)",
-                      P.installed() and "Reinstall" or "Install", P.install)
+            if P.installed() and not P.isV2() then
+                buttonRow("New Paimon files available (quieter console)", "Update", P.install)
+            else
+                buttonRow(P.installed() and "Paimon is installed" or "Install Paimon (about 75 MB, the game pauses briefly per file)",
+                          P.installed() and "Reinstall" or "Install", P.install)
+            end
         end
         if P.state == "failed" and P.why then infoRow("Last error", fit(F.small, P.lastFail .. ": " .. P.why, cw * 0.6)) end
         toggleRow("Paimon speaks on kills (her voice)", "paiVoice")
@@ -4043,12 +4134,14 @@ local function safe(name, fn, ...)
     local ok, err = pcall(fn, ...)
     local ms = (L.clock() - t0) * 1000
     local kb = collectgarbage("count") - m0
-    if kb < 0 then kb = 0 end
+    if kb < 0 then kb = 0; L.gcRan = true end                          -- (memory went down = a cleanup ran in this part)
+    if ms > L.slowMs then L.slowMs, L.slowName = ms, name end
     L.cost[name] = (L.cost[name] or ms) * 0.95 + ms * 0.05
     L.gc[name] = (L.gc[name] or kb) * 0.95 + kb * 0.05
     -- the worst frame of each part in the last 3 seconds
     if ms > (L.worst[name] or 0) or now() - (L.worstAt[name] or 0) > 3 then L.worst[name], L.worstAt[name] = ms, now() end
     ALPHA = 1
+    if not ok and tostring(err):find("Color not set", 1, true) then L.ccOk = false; ok = true end   -- (just set it again next time)
     if not ok and not reported[name] then
         reported[name] = true
         -- short form "line 123
@@ -4057,13 +4150,23 @@ local function safe(name, fn, ...)
     end
 end
 L.gc, L.worst, L.worstAt = {}, {}, {}
+L.slowMs, L.slowName, L.gcRan, L.spikeAt = 0, "none", false, 0
 L.frameWorst, L.frameWorstAt = 0, 0
 
 local function onDraw()
+    -- (no own cleanup step: it kept full cleanup rounds running nonstop = a drop every ~3 s)
+    L.gcMaxMs = max(L.gcPrevMs or 0, L.gcMs or 0); L.gcPrevMs = L.gcMs
     perfTick()
     local ft = globals.AbsoluteFrameTime() * 1000
     if ft > L.frameWorst or now() - L.frameWorstAt > 3 then L.frameWorst, L.frameWorstAt = ft, now() end
+    L.slowMs, L.slowName, L.gcRan = 0, "none", false
     L.curFont = nil
+    L.ccOk = false                                                    -- (forget the remembered colour each frame)
+    if settings.gcMode ~= L.gcModeSet then                            -- (Info > Memory cleanup)
+        L.gcModeSet = settings.gcMode
+        if settings.gcMode == 2 then pcall(collectgarbage, "incremental", 200, 100)
+        else pcall(collectgarbage, "generational", 20, 100) end
+    end
     L.boxFrame()
     if engine.IsTakingScreenshot() then return end
     L.buildPalette()
@@ -4128,6 +4231,7 @@ callbacks.Register("FireGameEvent", "destiny_events", function(e) safe("events",
 -- screen shake: moves only the picture you see, never where you aim
 callbacks.Register("RenderView", "destiny_shake", function(view) pcall(L.onRenderView, view) end)
 callbacks.Register("Unload", "destiny_unload", function()
+    pcall(collectgarbage, "restart")                                -- (Lua cleans up on its own again)
     saveConfig("autosave")
     if menu.cursor then pcall(input.SetMouseInputEnabled, false) end
     if settings.worldOn then applyWorld(true) end
