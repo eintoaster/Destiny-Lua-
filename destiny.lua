@@ -94,7 +94,7 @@ local DEFAULTS = {
     -- watermark
     wmOn = true, wmStyle = 2, wmFps = true, wmMap = true, wmTime = true,
     -- notifications
-    ntOn = true, ntStyle = 1, ntPos = 1, ntTime = 4, ntKills = true, ntDeaths = true, ntStreaks = true, ntAssists = true, ntFeatures = true,
+    ntOn = true, ntStyle = 1, ntPos = 1, ntTime = 4, ntKills = true, ntDeaths = true, ntStreaks = true, ntAssists = true, ntFeatures = true, ntDom = true,
     ntBg = true, ntBorder = 2, ntGrad = 1,
     -- hit effects: screen edge effect + extra effect + shake
     vigOn = true, vigStyle = 1, vigColor = 1, vigHit = true, vigKill = true, vigInt = 70, vigSize = 14, vigTintAmt = 10,
@@ -915,7 +915,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611102341"
+L.BUILD = "202611102347"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -2139,6 +2139,7 @@ end
 -- hit logs like the old paimon.lua: "You hit Heavy for 54 damage
 function P.hitLog(name, class, dmg, hp, crit)
     if not (settings.compOn and settings.compChar == 1 and settings.paiLogs and settings.compBubbles) then return end
+    if now() - (L.reactAt or -99) < 2.5 then return end
     local who = class and (name .. " (" .. class .. ")") or name
     local s
     if hp and hp > 0 then
@@ -3491,7 +3492,13 @@ function L.trackKill(victim, weapon, how, flags)
     L.ksAt, L.chKillAt, L.lastAction, L.ssAt = t, t, t, nil
     if L.KS_BANNERS[me.streak] then L.ksBannerAt, L.ksBannerS = t, L.KS_BANNERS[me.streak] end
     L.feedAdd(1, "You", (weapon or "killed") .. (how and ("  •  " .. how) or ""), victim)
-    if flags & 1 ~= 0 then L.react("domination") elseif flags & 4 ~= 0 then L.react("revenge") end
+    if flags & 1 ~= 0 then
+        if settings.ntDom then notify("♛", "You are dominating " .. victim, "They haven't killed you in 4 of your kills", GOLD) end
+        L.react("domination")
+    elseif flags & 4 ~= 0 then
+        if settings.ntDom then notify("⚔", "Revenge on " .. victim, "They are not dominating you any more", L.GREEN) end
+        L.react("revenge")
+    end
 end
 
 function L.trackDeath(killer, weapon, suicide, lost, flags)
@@ -3499,7 +3506,10 @@ function L.trackDeath(killer, weapon, suicide, lost, flags)
     s.deaths, r.deaths = s.deaths + 1, r.deaths + 1
     L.lastAction, L.ssAt = now(), nil
     if suicide then L.feedAdd(2, "You", "died", "") else L.feedAdd(2, killer, weapon or "killed", "You") end
-    if flags & 1 ~= 0 then L.react("dominated") elseif lost >= 5 then L.react("streakLost") end
+    if flags & 1 ~= 0 then
+        if settings.ntDom then notify("☠", killer .. " is dominating you", "Kill them to get revenge", RED) end
+        L.react("dominated")
+    elseif lost >= 5 then L.react("streakLost") end
 end
 
 function L.trackAssist(victim)
@@ -4579,6 +4589,7 @@ local PAGES = {
         toggleRow("My deaths (who and with what)", "ntDeaths")
         toggleRow("Killstreaks (3, 5, 10, ...)", "ntStreaks")
         toggleRow("Assists", "ntAssists")
+        toggleRow("Dominations and revenge", "ntDom")
         toggleRow("A lmaobox option is switched on or off", "ntFeatures")
         buttonRow("Send a test notification", "Test", function()
             notify("☠", "You killed " .. steamName(), "Heavy  •  Minigun  •  Headshot", accent())
