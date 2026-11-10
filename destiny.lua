@@ -115,7 +115,7 @@ local DEFAULTS = {
     paiIdle = true, paiIdleEvery = 90, compReact = true,
     -- player HUDs
     phStyle = 1, phBorder = 1, phGrad = 1,
-    ssOn = false, kfOn = false, kfTime = 6, kfAssists = true, kfHide = false, hpOn = false, hpAmmo = true,
+    ssOn = false, kfOn = false, kfTime = 6, kfAssists = true, kfHide = false, hpOn = false, hpAmmo = true, hpHide = false,
     ksOn = true, ksStyle = 1, ksMin = 2, ksBanner = true, rsOn = true, rsTime = 8,
     lhOn = true, lhAt = 35, lhInt = 60, lhPulse = true, colLow = "",
     -- crosshair
@@ -915,7 +915,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611102347"
+L.BUILD = "202611102350"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -3692,8 +3692,33 @@ function L.drawFeed()
     end
 end
 
+-- the game's own health and ammo are hidden through its "hidehud" setting (8 = the health group), which
+-- is only kept while our HUD is shown and put back afterwards
+function L.hpCvar(off)
+    local want = (not off) and settings.hpOn and settings.hpHide
+    if want then
+        local t = now()
+        if not L.hpHidden then
+            local ok, v = pcall(client.GetConVar, "hidehud")
+            L.hpOld = (ok and tonumber(v) or 0) // 1 & ~8
+            L.hpHidden, L.hpCheckAt = true, -9
+        end
+        if t - L.hpCheckAt > 1 then
+            L.hpCheckAt = t
+            local ok, v = pcall(client.GetConVar, "hidehud")
+            v = ok and tonumber(v) or 0
+            if (v // 1) & 8 == 0 then pcall(client.SetConVar, "hidehud", L.hpOld | 8) end
+        end
+    elseif L.hpHidden then
+        L.hpHidden = false
+        pcall(client.SetConVar, "hidehud", L.hpOld or 0)
+    end
+end
+
 -- health and ammo
 function L.drawVitals()
+    L.hpCvar()
+    if not settings.hpOn then return end
     local h = L.hp
     if not h.alive and not menu.open then return end
     local sw, sh = draw.GetScreenSize()
@@ -4671,6 +4696,7 @@ local PAGES = {
         section("Health and ammo")
         toggleRow("Show my health", "hpOn")
         toggleRow("With ammo", "hpAmmo")
+        toggleRow("Hide the game's own health and ammo", "hpHide")
         section("Killstreak counter")
         toggleRow("Show the killstreak counter", "ksOn")
         dropRow("Look", "ksStyle", L.KS_STYLES)
@@ -4686,7 +4712,7 @@ local PAGES = {
         sliderRow("Strength", "lhInt", 10, 100, "%")
         toggleRow("Beat like a heart", "lhPulse")
         colorRow("Colour", "colLow", L.HOT)
-        paraCard("Drag any of these anywhere while the menu is open. The killfeed only shows what you did and what happened to you. If the game's killfeed ever stays hidden, type hud_deathnotice_time 6 in the console.")
+        paraCard("Drag any of these anywhere while the menu is open. The killfeed only shows what you did and what happened to you. If the game's killfeed ever stays hidden, type hud_deathnotice_time 6 in the console; for its health and ammo, hidehud 0.")
     end },
     { group = "VISUALS", icon = "⌖", name = "Crosshair", draw = function()
         section("Crosshair")
@@ -5046,7 +5072,7 @@ local function onDraw()
     if settings.chOn or L.chHidden then safe("crosshair", L.drawCrosshair) end
     if settings.ssOn then safe("stats", L.drawStats) end
     if settings.kfOn or settings.kfHide or L.kfHidden then safe("killfeed", L.drawFeed) end
-    if settings.hpOn then safe("health", L.drawVitals) end
+    if settings.hpOn or L.hpHidden then safe("health", L.drawVitals) end
     if settings.ksOn then safe("killstreak", L.drawStreak) end
     if settings.rsOn then safe("round summary", L.drawRound) end
     if settings.compOn then safe("waifu", drawCompanion) end
@@ -5072,6 +5098,7 @@ callbacks.Register("Unload", "destiny_unload", function()
     if settings.worldOn then applyWorld(true) end
     pcall(L.chCvar, true)
     pcall(L.kfCvar, true)
+    pcall(L.hpCvar, true)
     pcall(draw.DeleteTexture, WHITE)
     for _, t in pairs(shapeTex) do pcall(draw.DeleteTexture, t.id) end
     L.boxClear()
