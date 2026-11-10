@@ -4017,6 +4017,7 @@ local PAGES = {
     { group = "SYSTEM", icon = "ⓘ", name = "Info", draw = function()
         section("About")
         paraCard("Destiny v1 Visual Lua for LMAOBOX. (BETA)")
+        paraCard("Discord: yeko333")
         buttonRow("Check for updates", updater.running and "Checking..." or "Check", function() updaterCheck() end)
     end },
 }
