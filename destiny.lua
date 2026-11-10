@@ -915,7 +915,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611102337"
+L.BUILD = "202611102341"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -3610,17 +3610,29 @@ end
 
 -- the game's own killfeed is hidden by giving its entries no time on screen, and put back afterwards
 function L.kfCvar(off)
-    local want = (not off) and settings.kfOn and settings.kfHide
-    if want == (L.kfHidden or false) then return end
+    local want = (not off) and settings.kfHide
     if want then
-        local ok, v = pcall(client.GetConVar, "hud_deathnotice_time")
-        L.kfOld = (ok and tonumber(v)) or 6
-        if L.kfOld <= 0 then L.kfOld = 6 end
-        pcall(client.SetConVar, "hud_deathnotice_time", 0)
-    else
+        local t = now()
+        if not L.kfHidden then
+            local ok, v = pcall(client.GetConVar, "hud_deathnotice_time")
+            v = ok and tonumber(v) or 6
+            L.kfOld = v > 0 and v or 6
+            L.kfHidden, L.kfCheckAt = true, -9
+        end
+        -- looked at once a second: set again when the game or a config put it back
+        if t - L.kfCheckAt > 1 then
+            L.kfCheckAt = t
+            local ok, v = pcall(client.GetConVar, "hud_deathnotice_time")
+            if not ok or tonumber(v) ~= 0 then
+                pcall(client.SetConVar, "hud_deathnotice_time", 0)
+                pcall(client.Command, "hud_deathnotice_time 0", true)
+            end
+        end
+    elseif L.kfHidden then
+        L.kfHidden = false
         pcall(client.SetConVar, "hud_deathnotice_time", L.kfOld or 6)
+        pcall(client.Command, "hud_deathnotice_time " .. (L.kfOld or 6), true)
     end
-    L.kfHidden = want
 end
 
 -- killfeed: only what I did and what happened to me
@@ -5022,7 +5034,7 @@ local function onDraw()
     if settings.sgOn then safe("speed graph", L.drawSpeedGraph) end
     if settings.chOn or L.chHidden then safe("crosshair", L.drawCrosshair) end
     if settings.ssOn then safe("stats", L.drawStats) end
-    if settings.kfOn or L.kfHidden then safe("killfeed", L.drawFeed) end
+    if settings.kfOn or settings.kfHide or L.kfHidden then safe("killfeed", L.drawFeed) end
     if settings.hpOn then safe("health", L.drawVitals) end
     if settings.ksOn then safe("killstreak", L.drawStreak) end
     if settings.rsOn then safe("round summary", L.drawRound) end
