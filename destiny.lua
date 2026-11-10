@@ -914,6 +914,8 @@ local UPDATE_URL = "https://raw.githubusercontent.com/eintoaster/Destiny-Lua-/re
 local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
+-- which build this file is; the note in destiny_files says which build and commit was installed last
+L.BUILD = "202611102320"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -971,10 +973,13 @@ local function updaterCheck(auto)
         if not auto then notify("✖", "Can't check for updates", why, RED) end
         return
     end
-    local installed = nil
+    -- the note only counts when it was written for the file that is running now: an older destiny.lua
+    -- started by hand has another build number and gets updated
+    local note = nil
     local okI, fi = pcall(io.open, "destiny_files/destiny_installed.txt", "r")
-    if okI and fi then installed = (fi:read("*a") or ""):match("%x+"); fi:close() end
-    if installed == sha then
+    if okI and fi then note = fi:read("*a") or ""; fi:close() end
+    local noteBuild, noteSha = (note or ""):match("^b(%d+) (%x+)")
+    if noteSha == sha and noteBuild == L.BUILD then
         updater.running = false
         if not auto then notify("✔", "Destiny is up to date", "version " .. sha:sub(1, 7), accent()) end
         return
@@ -987,6 +992,18 @@ local function updaterCheck(auto)
     end
     if type(remote) ~= "string" or #remote < 10000 or remote:sub(1, 5) == "ERROR" then
         notify("✖", "Update check failed", tostring(remote):sub(1, 60), RED)
+        return
+    end
+    local newBuild = remote:match('L%.BUILD = "(%d+)"') or "0"
+    local function saveNote()
+        pcall(filesystem.CreateDirectory, "destiny_files")
+        local okS, fs = pcall(io.open, "destiny_files/destiny_installed.txt", "w")
+        if okS and fs then fs:write("b" .. newBuild .. " " .. sha); fs:close() end
+    end
+    -- first run of a copy that is already the newest: nothing to download, just remember it
+    if (not note or note == "") and newBuild == L.BUILD and L.BUILD ~= "0" then
+        saveNote()
+        if not auto then notify("✔", "Destiny is up to date", "version " .. sha:sub(1, 7), accent()) end
         return
     end
     -- write the download to a temp file
@@ -1024,8 +1041,7 @@ local function updaterCheck(auto)
     end
     pcall(os.remove, old)
     updater.path = path
-    local okS, fs = pcall(io.open, "destiny_files/destiny_installed.txt", "w")
-    if okS and fs then fs:write(sha); fs:close() end
+    saveNote()
     notify("⚡", "Destiny was updated (" .. sha:sub(1, 7) .. ")", "Please restart destiny.lua to load it", GOLD)
     print("[destiny] updated: " .. tostring(path))
 end
