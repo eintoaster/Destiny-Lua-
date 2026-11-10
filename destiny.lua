@@ -915,7 +915,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611102333"
+L.BUILD = "202611102337"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -1505,6 +1505,20 @@ local function cpoly(c, a, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, x7, y
     if n >= 6 then v = arr[6]; v[1], v[2] = ox + x6 * s, oy + y6 * s end
     if n >= 7 then v = arr[7]; v[1], v[2] = ox + x7 * s, oy + y7 * s end
     if n >= 8 then v = arr[8]; v[1], v[2] = ox + x8 * s, oy + y8 * s end
+    -- lmaobox only draws corners given clockwise: turn the list around when it runs the other way
+    local area, p = 0, arr[n]
+    for i = 1, n do
+        v = arr[i]
+        area = area + p[1] * v[2] - v[1] * p[2]
+        p = v
+    end
+    if area < 0 then
+        for i = 1, n // 2 do
+            local q = arr[n + 1 - i]
+            v = arr[i]
+            v[1], v[2], q[1], q[2] = q[1], q[2], v[1], v[2]
+        end
+    end
     color(c, a)
     draw.TexturedPolygon(WHITE, arr, false)
 end
