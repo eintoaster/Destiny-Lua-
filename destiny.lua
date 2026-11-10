@@ -112,7 +112,15 @@ local DEFAULTS = {
     -- waifus
     compOn = false, compChar = 1, compSize = 100, compBubbles = true, compFollow = true,
     paiVoice = true, paiFont = true, paiLogs = true, paiLogTime = 4,
-    paiIdle = true, paiIdleEvery = 90,
+    paiIdle = true, paiIdleEvery = 90, compReact = true,
+    -- player HUDs
+    phStyle = 1, phBorder = 1, phGrad = 1,
+    ssOn = false, kfOn = false, kfTime = 6, kfAssists = true, hpOn = false, hpAmmo = true,
+    ksOn = true, ksMin = 2, ksBanner = true, rsOn = true, rsTime = 8,
+    lhOn = true, lhAt = 35, lhInt = 60, lhPulse = true, colLow = "",
+    -- crosshair
+    chOn = false, chShape = 1, chSize = 7, chGap = 4, chThick = 2, chAlpha = 100, chOutline = true, colCh = "", chGrad = 1,
+    chAnim = 1, chSpeed = 5, chMove = false, chFire = false, chHit = true, chKill = true, chHide = false,
     -- config
     slot = 1,
     -- menu key
@@ -1082,7 +1090,7 @@ end
 
 L.STREAK_STEPS = { [3] = true, [5] = true, [10] = true, [15] = true, [20] = true, [25] = true, [30] = true }
 
-local function onKill(victimName, class, weapon, custom)
+local function onKill(victimName, class, weapon, custom, flags)
     me.streak = me.streak + 1
     if now() - me.lastKill <= settings.kaWindow then me.tier = me.tier + 1 else me.tier = 1 end
     me.lastKill = now()
@@ -1105,9 +1113,10 @@ local function onKill(victimName, class, weapon, custom)
     vigTrigger(true)
     if settings.kaOn and settings.kaSound then playFrom(L.KILL_SOUNDS, max(2, settings.killSound)) else playFrom(L.KILL_SOUNDS, settings.killSound) end
     L.paimon.onKill()
+    L.trackKill(victimName, weapon, how, flags)
 end
 
-local function onDeath(killerName, class, weapon, suicide)
+local function onDeath(killerName, class, weapon, suicide, flags)
     local lost = me.streak
     me.streak, me.tier = 0, 0
     if settings.ntDeaths then
@@ -1116,10 +1125,16 @@ local function onDeath(killerName, class, weapon, suicide)
         notify("✝", suicide and "You died" or ("Killed by " .. killerName), body, RED)
     end
     if class and not suicide and math.random() < 0.6 then compSay("deathBy", class) else compSay("death") end
+    L.trackDeath(killerName, weapon, suicide, lost, flags)
 end
 
 local function onGameEvent(e)
     local name = e:GetName()
+    if name == "teamplay_round_start" then L.roundStart(); return end
+    if name == "teamplay_round_win" then
+        if settings.rsOn then L.roundEnd(e:GetInt("team") or 0) end
+        return
+    end
     if name ~= "player_death" and name ~= "player_hurt" then return end
     local mine = myUserID()
     if not mine then return end
@@ -1128,11 +1143,12 @@ local function onGameEvent(e)
     if name == "player_death" then
         local weapon = L.weaponName(e:GetString("weapon"))
         if attacker == mine and victim ~= mine then
-            onKill(nameOf(victim), L.classOf(victim), weapon, e:GetInt("customkill"))
+            onKill(nameOf(victim), L.classOf(victim), weapon, e:GetInt("customkill"), e:GetInt("death_flags") or 0)
         elseif victim == mine then
-            onDeath(nameOf(attacker), L.classOf(attacker), weapon, attacker == mine or attacker == 0)
-        elseif e:GetInt("assister") == mine and settings.ntAssists then
-            notify("✚", "Assist on " .. nameOf(victim), joinParts(L.classOf(victim), weapon), SKY)
+            onDeath(nameOf(attacker), L.classOf(attacker), weapon, attacker == mine or attacker == 0, e:GetInt("death_flags") or 0)
+        elseif e:GetInt("assister") == mine then
+            if settings.ntAssists then notify("✚", "Assist on " .. nameOf(victim), joinParts(L.classOf(victim), weapon), SKY) end
+            L.trackAssist(nameOf(victim))
         end
     elseif attacker == mine and victim ~= mine then
         local ent = entities.GetByUserID(victim)
@@ -1141,6 +1157,7 @@ local function onGameEvent(e)
         L.paimon.hitLog(nameOf(victim), L.classOf(victim), e:GetInt("damageamount"), e:GetInt("health"), crit)
         vigTrigger(false)
         playFrom(L.HIT_SOUNDS, settings.hitSound)
+        L.trackHit(e:GetInt("damageamount") or 0)
     end
 end
 
@@ -3281,6 +3298,593 @@ function L.kaStops()
 end
 
 ---------------------------------------------------------------------------
+-- 8o. Player HUDs: stats, killfeed, health and ammo, killstreak, round summary, crosshair
+---------------------------------------------------------------------------
+F.ksN = draw.CreateFont("Segoe UI Black", 40, 900, FONTFLAG_ANTIALIAS | FONTFLAG_OUTLINE)
+L.GREEN, L.ORANGE, L.HOT = { 16, 185, 129 }, { 255, 122, 24 }, { 255, 45, 85 }
+L.NLTRACK, L.GSTXT = { 30, 30, 46 }, { 235, 235, 240 }
+L.ss = { kills = 0, deaths = 0, assists = 0, best = 0, dmg = 0, t0 = now() }
+L.rs = { kills = 0, deaths = 0, assists = 0, best = 0, dmg = 0 }
+L.feed = {}
+L.hp = { hp = 0, max = 1, clip = -1, res = -1, speed = 0, alive = false, at = -9, hpS = "0", clipS = "", resS = "" }
+L.lastAction = now()
+
+-- small numbers as text without making a new string every frame
+L.numS = {}
+function L.num(n)
+    if n < 0 or n > 3000 then return tostring(n) end
+    local s = L.numS[n]
+    if not s then s = tostring(n); L.numS[n] = s end
+    return s
+end
+
+-- the 7 HUD looks as a plain panel: colours and fonts first, then the box
+L.pal = { c = { 255, 255, 255 } }
+L.PH = { 32, 24, 27, 30, 32, 26, 38 }
+function L.palFor(st, grad)
+    local p = L.pal
+    local gs = L.gradStops(grad)
+    local col
+    p.shadow, p.pad = false, 12
+    if st == 2 then p.txt, p.dim, col, p.f, p.fb, p.track, p.pad = C_WHITE, L.SKG, L.SKON, F.sk, F.sk, L.SK3, 9
+    elseif st == 3 then p.txt, p.dim, col, p.f, p.fb, p.track, p.pad = C_WHITE, L.NLDIM, L.NLBLUE, F.nlR, F.nlT, L.NLTRACK, 8
+    elseif st == 4 then p.txt, p.dim, col, p.f, p.fb, p.track = RD.white, RD.dim, RD.violet, F.small, F.rd, L.SGRD
+    elseif st == 5 then p.txt, p.dim, col, p.f, p.fb, p.track = MC.text, MC.dim, MC.val, F.small, F.rd, L.SGMC
+    elseif st == 6 then p.txt, p.dim, col, p.f, p.fb, p.track, p.pad, p.shadow = L.GSTXT, L.GSDIM, L.GSON, F.gs, F.gs, C_BLACK, 4, true
+    elseif st == 7 then p.txt, p.dim, col, p.f, p.fb, p.track = SL.text, SL.dim, accent(), F.small, F.bold, SL.line
+    else p.txt, p.dim, col, p.f, p.fb, p.track = T.text, T.muted, accent(), F.small, F.bold, T.pill end
+    if gs then col = sampleStops(gs, now() * 0.12) end
+    p.c[1], p.c[2], p.c[3] = col[1], col[2], col[3]
+    return p
+end
+
+function L.pt(font, s, x, y, h, c, a)
+    if L.pal.shadow then text(font, s, x + 1, y + 1, h, C_BLACK, (a or 255) * 0.75) end
+    text(font, s, x, y, h, c, a)
+end
+
+function L.skBox(x, y, w, h)
+    rect(x, y, w, h, L.SK1)
+    rect(x + 1, y + 1, w - 2, h - 2, L.SK2)
+    rect(x + 2, y + 2, w - 4, h - 4, L.SKBG)
+    if h < 40 then return end
+    x, y, w = round(x), round(y), round(w)
+    local w1 = floor((w - 6) / 2)
+    color(L.SKB, 255); draw.FilledRect(x + 3, y + 3, x + 3 + w1, y + 4)
+    rawColor(L.SKP[1], L.SKP[2], L.SKP[3], 255); draw.FilledRectFade(x + 3, y + 3, x + 3 + w1, y + 4, 0, 255, true)
+    color(L.SKP, 255); draw.FilledRect(x + 3 + w1, y + 3, x + w - 3, y + 4)
+    rawColor(L.SKY[1], L.SKY[2], L.SKY[3], 255); draw.FilledRectFade(x + 3 + w1, y + 3, x + w - 3, y + 4, 0, 255, true)
+end
+
+function L.panelBg(st, x, y, w, h, title, bord, grad)
+    local p = L.pal
+    if st == 2 then
+        L.skBox(x, y, w, h)
+        if title then text(F.sk, title, x + 9, y + 7, 15, L.SKG) end
+    elseif st == 3 then
+        if title then
+            rect(x, y, w, 25, L.NLBAR, 200)
+            text(F.nlT, title, x + 8, y, 25, C_WHITE)
+            rect(x, y + 25, w, h - 25, L.NLBAR, 120)
+            rect(x, y + 25, w, h - 25, L.NLLIST, 15)
+        else
+            rect(x, y, w, h, L.NLBAR, 185)
+        end
+    elseif st == 4 then
+        roundRect(x, y + 3, w, h, 10, C_BLACK, 60)
+        roundRect(x, y, w, h, 10, RD.body, 225)
+        if bord <= 1 then roundRectLine(x, y, w, h, 10, RD.border, 170) else L.styledBorder(bord, grad, x, y, w, h, 10) end
+        if title then
+            text(F.icon, "✦", x + 11, y + 3, 24, p.c)
+            text(F.rd, title, x + 30, y + 3, 24, RD.white)
+        end
+    elseif st == 5 then
+        mercuryBox(x, y, w, h, 9)
+        L.styledBorder(bord, grad, x, y, w, h, 9)
+        if title then
+            text(F.rd, title, x + 12, y + 3, 24, MC.text)
+            rect(x + 8, y + 28, w - 16, 1, MC.border, 150)
+        end
+    elseif st == 6 then
+        if title then L.pt(F.gs, title, x + 4, y, 24, p.c) end
+    elseif st == 7 then
+        for i = 1, 4 do
+            local e = i * 1.7
+            roundRectLine(x - e, y - e, w + 2 * e, h + 2 * e, 10 + e, p.c, 46 - i * 10)
+        end
+        roundRect(x, y, w, h, 10, L.SLBG, 232)
+        roundRectLine(x, y, w, h, 10, C_WHITE, 26)
+        rect(x + 10, y, w - 20, 1, p.c, 160)
+        L.styledBorder(bord, grad, x, y, w, h, 10)
+        if title then text(F.script, title, x + 14, y + 5, 30, mix(p.c, C_WHITE, 0.2)) end
+    else
+        roundRect(x - 2, y + 2, w + 4, h, 16, C_BLACK, 45)
+        roundRect(x, y, w, h, 14, T.card, 240)
+        if bord <= 1 then roundRectLine(x, y, w, h, 14, T.border) else L.styledBorder(bord, grad, x, y, w, h, 14) end
+        if title then text(F.bold, title, x + 14, y + 5, 24, T.text) end
+    end
+end
+
+-- waifu lines for more than kills and deaths
+L.MORE_LINES = {
+    domination = { "You own them now!", "Total domination~", "They must be so mad right now!" },
+    revenge    = { "Revenge! Serves them right!", "Payback time~", "That's what they get!" },
+    dominated  = { "They keep getting you... Change it up!", "Don't let them farm you!", "Okay, now it's personal." },
+    streakLost = { "Aww, the streak...", "It was a good run!", "Start a new one!" },
+    assist     = { "Teamwork!", "Nice assist~", "You helped!" },
+    roundWin   = { "We won! We won!", "Victory~ You carried!", "GG! That was great!" },
+    roundLose  = { "Next round is ours!", "Unlucky... Shake it off!", "We'll get them back!" },
+    lowHp      = { "Careful, you're hurt!", "Find a medkit, quick!", "Fall back, fall back!" },
+    spawn      = { "Back in action!", "Let's go again!", "Round two~" },
+    bored      = { "It's so quiet...", "Where is everyone?", "Go find someone to fight~" },
+}
+L.MORE_PLINES = {
+    domination = { "Paimon declares them officially dominated!", "Hehe, they belong to us now!", "Paimon almost feels bad for them. Almost." },
+    revenge    = { "Revenge! Paimon never forgets!", "Ha! Take that!", "That's what you get for messing with us!" },
+    dominated  = { "They got you again?! Paimon is getting angry!", "Paimon will think of a really ugly nickname for them!", "Try a different way in, traveler!" },
+    streakLost = { "Nooo, our streak!", "Paimon was counting those...", "It was fun while it lasted!" },
+    assist     = { "Teamwork! Paimon helped too! ...Sort of.", "Nice assist!", "We make a great team!" },
+    roundWin   = { "We won! Paimon wants a feast to celebrate!", "Victory! Paimon knew it all along!", "Hooray! Best team ever!" },
+    roundLose  = { "Hmph! They just got lucky!", "Paimon demands a rematch!", "Don't be sad, we'll get them next round!" },
+    lowHp      = { "Traveler, you're hurt! Eat something!", "Careful! Paimon can't carry you!", "Run away! Run away!" },
+    spawn      = { "Back again! Let's go!", "Paimon missed you! Now get them!", "Okay, new plan: don't die!" },
+    bored      = { "It's too quiet... Paimon is bored.", "Hellooo? Anyone out there?", "Paimon could really use a snack right now." },
+}
+for k, v in pairs(L.MORE_LINES) do L.LINES[k] = v end
+for k, v in pairs(L.MORE_PLINES) do L.PLINES[k] = v end
+
+function L.react(kind, chance)
+    if not settings.compOn or not settings.compReact then return end
+    if chance and math.random() > chance then return end
+    local t = now()
+    if t - (L.reactAt or -99) < 4 then return end
+    L.reactAt = t
+    compSay(kind)
+    if settings.compChar == 1 and settings.paiVoice and (kind == "roundWin" or kind == "domination" or kind == "revenge") then
+        L.paimon.speak(false)
+    end
+end
+
+-- kill / death / assist entries of the killfeed, newest first
+function L.feedAdd(kind, a, mid, b)
+    local f = L.feed
+    table.insert(f, 1, { kind = kind, a = a, mid = mid, b = b, t0 = now() })
+    for i = #f, 7, -1 do f[i] = nil end
+end
+
+function L.trackKill(victim, weapon, how, flags)
+    local s, r = L.ss, L.rs
+    s.kills, r.kills = s.kills + 1, r.kills + 1
+    if me.streak > s.best then s.best = me.streak end
+    if me.streak > r.best then r.best = me.streak end
+    local t = now()
+    L.ksAt, L.chKillAt, L.lastAction, L.ssAt = t, t, t, nil
+    if L.KS_BANNERS[me.streak] then L.ksBannerAt, L.ksBannerS = t, L.KS_BANNERS[me.streak] end
+    L.feedAdd(1, "You", (weapon or "killed") .. (how and ("  •  " .. how) or ""), victim)
+    if flags & 1 ~= 0 then L.react("domination") elseif flags & 4 ~= 0 then L.react("revenge") end
+end
+
+function L.trackDeath(killer, weapon, suicide, lost, flags)
+    local s, r = L.ss, L.rs
+    s.deaths, r.deaths = s.deaths + 1, r.deaths + 1
+    L.lastAction, L.ssAt = now(), nil
+    if suicide then L.feedAdd(2, "You", "died", "") else L.feedAdd(2, killer, weapon or "killed", "You") end
+    if flags & 1 ~= 0 then L.react("dominated") elseif lost >= 5 then L.react("streakLost") end
+end
+
+function L.trackAssist(victim)
+    L.ss.assists, L.rs.assists, L.ssAt = L.ss.assists + 1, L.rs.assists + 1, nil
+    if settings.kfAssists then L.feedAdd(3, "You", "assist", victim) end
+    L.react("assist", 0.4)
+end
+
+function L.trackHit(dmg)
+    L.ss.dmg, L.rs.dmg = L.ss.dmg + dmg, L.rs.dmg + dmg
+    L.chHitAt, L.lastAction = now(), now()
+end
+
+function L.roundStart()
+    local r = L.rs
+    r.kills, r.deaths, r.assists, r.best, r.dmg = 0, 0, 0, 0, 0
+end
+
+L.rsRows = { { "KILLS", "0" }, { "DEATHS", "0" }, { "ASSISTS", "0" }, { "DAMAGE", "0" }, { "BEST STREAK", "0" } }
+function L.roundEnd(team, preview)
+    local r, rows = L.rs, L.rsRows
+    rows[1][2], rows[2][2], rows[3][2] = tostring(r.kills), tostring(r.deaths), tostring(r.assists)
+    rows[4][2], rows[5][2] = tostring(r.dmg), tostring(r.best)
+    local lp = entities.GetLocalPlayer()
+    local ok, mine = pcall(function() return lp:GetTeamNumber() end)
+    mine = ok and mine or 0
+    if preview then L.rsTitle, L.rsWin = "VICTORY", true
+    elseif team < 2 then L.rsTitle, L.rsWin = "STALEMATE", nil
+    elseif mine < 2 then L.rsTitle, L.rsWin = "ROUND OVER", nil
+    else
+        L.rsWin = (mine == team)
+        L.rsTitle = L.rsWin and "VICTORY" or "DEFEAT"
+        L.react(L.rsWin and "roundWin" or "roundLose")
+    end
+    L.rsAt = now()
+end
+
+-- my own health, ammo and speed, read 10 times a second
+function L.pollSelf()
+    local h = L.hp
+    local t = now()
+    if t - h.at < 0.1 then return end
+    h.at = t
+    local lp = entities.GetLocalPlayer()
+    local was = h.alive
+    if not lp then h.alive = false; return end
+    local okA, alive = pcall(lp.IsAlive, lp)
+    h.alive = (okA and alive) and true or false
+    if not h.alive then h.low = false; return end
+    local hp, mx = lp:GetHealth() or 0, lp:GetMaxHealth() or 1
+    if hp ~= h.hp then h.hp, h.hpS = hp, L.num(hp) end
+    h.max = max(1, mx)
+    local okV, v = pcall(lp.EstimateAbsVelocity, lp)
+    h.speed = (okV and v) and sqrt(v.x * v.x + v.y * v.y) or 0
+
+    local clip, res = -1, -1
+    local okW, w = pcall(lp.GetPropEntity, lp, "m_hActiveWeapon")
+    if okW and w and w:IsValid() then
+        local ok1, c = pcall(w.GetPropInt, w, "LocalWeaponData", "m_iClip1")
+        local ok2, kind = pcall(w.GetPropInt, w, "LocalWeaponData", "m_iPrimaryAmmoType")
+        if ok1 and c and c >= 0 and c < 500 then clip = c end
+        if ok2 and kind and kind > 0 and kind < 30 then
+            local ok3, tbl = pcall(lp.GetPropDataTableInt, lp, "localdata", "m_iAmmo")
+            local r = ok3 and type(tbl) == "table" and tbl[kind + 1]
+            if r and r >= 0 and r < 2000 then res = r end
+        end
+    end
+    if clip ~= h.clip then h.clip, h.clipS = clip, clip >= 0 and L.num(clip) or "" end
+    if res ~= h.res then h.res, h.resS = res, res >= 0 and L.num(res) or "" end
+
+    -- waifu: respawn, low health, nothing happening
+    if not was and h.seen then L.react("spawn", 0.35); L.lastAction = t end
+    h.seen = true
+    local low = hp / h.max < settings.lhAt / 100
+    if low and not h.low and t - (h.lowSaid or -99) > 25 then h.lowSaid = t; L.react("lowHp") end
+    h.low = low
+    if t - L.lastAction > 150 then L.lastAction = t; L.react("bored") end
+end
+
+-- session stats card
+L.ssRows = { { "Kills", "0" }, { "Deaths", "0" }, { "Assists", "0" }, { "K/D", "0.00" }, { "Best streak", "0" },
+             { "Damage", "0" }, { "Time", "0:00" } }
+function L.drawStats()
+    local s, rows = L.ss, L.ssRows
+    local t = now()
+    if not L.ssAt or t - L.ssAt > 0.5 then
+        L.ssAt = t
+        rows[1][2], rows[2][2], rows[3][2] = tostring(s.kills), tostring(s.deaths), tostring(s.assists)
+        rows[4][2] = string.format("%.2f", s.kills / max(1, s.deaths))
+        rows[5][2], rows[6][2] = tostring(s.best), tostring(s.dmg)
+        local sec = floor(t - s.t0)
+        rows[7][2] = sec >= 3600 and string.format("%d:%02d:%02d", sec // 3600, sec % 3600 // 60, sec % 60)
+                     or string.format("%d:%02d", sec // 60, sec % 60)
+    end
+    local st = settings.phStyle
+    local _, sh = draw.GetScreenSize()
+    local W, rh, head = 180, 21, L.PH[st] or 32
+    local H = head + #rows * rh + 10
+    local x, y = draggable("ss", 14, sh / 2 - H / 2, W, H)
+    local p = L.palFor(st, settings.phGrad)
+    L.panelBg(st, x, y, W, H, st == 6 and "SESSION" or "Session", settings.phBorder, settings.phGrad)
+    for i, r in ipairs(rows) do
+        local ry = y + head + 4 + (i - 1) * rh
+        L.pt(p.f, r[1], x + p.pad, ry, rh, p.dim)
+        L.pt(p.f, r[2], x + W - p.pad - textW(p.f, r[2]), ry, rh, i == 4 and p.c or p.txt)
+    end
+end
+
+-- killfeed: only what I did and what happened to me
+function L.drawFeed()
+    local f = L.feed
+    local t = now()
+    local life = settings.kfTime
+    for i = #f, 1, -1 do
+        if t - f[i].t0 > life + 0.4 then f[i] = nil end
+    end
+    if #f == 0 and not menu.open then return end
+    local sw = draw.GetScreenSize()
+    local W, rh = 320, 28
+    local x, y = draggable("kf", sw - W - 14, 110, W, 6 * rh)
+    if #f == 0 then
+        roundRectLine(x, y, W, 6 * rh, 8, T.border, 150)
+        textC(F.small, "killfeed", x + W / 2, y, 6 * rh, T.muted)
+        return
+    end
+    local st = settings.phStyle
+    local p = L.palFor(st, settings.phGrad)
+    local rightSide = x + W / 2 > sw / 2
+    local yy = y
+    for i = 1, #f do
+        local e = f[i]
+        local age = t - e.t0
+        local aIn = easeOut(age / 0.25)
+        local aOut = clamp((life + 0.4 - age) / 0.4, 0, 1)
+        local wa, wm, wb = textW(p.fb, e.a), textW(p.f, e.mid), textW(p.fb, e.b)
+        local w = p.pad * 2 + 6 + wa + 12 + wm + (wb > 0 and (12 + wb) or 0)
+        w = min(W, floor((w + 7) / 8) * 8)
+        local ex = round((rightSide and (x + W - w) or x) + (rightSide and 1 or -1) * (1 - aIn) * 26)
+        local ey = round(yy)
+        local kc = (e.kind == 2) and RED or ((e.kind == 3) and SKY or p.c)
+        ALPHA = aIn * aOut
+        L.panelBg(st, ex, ey, w, 24, nil, settings.phBorder, settings.phGrad)
+        if st ~= 6 then rect(ex + 4, ey + 6, 2, 12, kc) end
+        local tx = ex + p.pad + 6
+        L.pt(p.fb, e.a, tx, ey, 24, e.kind == 2 and p.txt or kc)
+        tx = tx + wa + 12
+        L.pt(p.f, e.mid, tx, ey, 24, p.dim)
+        if wb > 0 then L.pt(p.fb, e.b, tx + wm + 12, ey, 24, e.kind == 2 and RED or p.txt) end
+        ALPHA = 1
+        yy = yy + rh * aOut
+    end
+end
+
+-- health and ammo
+function L.drawVitals()
+    local h = L.hp
+    if not h.alive and not menu.open then return end
+    local sw, sh = draw.GetScreenSize()
+    local st = settings.phStyle
+    local ammo = settings.hpAmmo
+    local W, H = ammo and 260 or 170, 52
+    local x, y = draggable("hp", sw / 2 - W / 2, sh - H - 46, W, H)
+    local p = L.palFor(st, settings.phGrad)
+    L.panelBg(st, x, y, W, H, nil, settings.phBorder, settings.phGrad)
+    local t = now()
+    local frac = clamp(h.hp / h.max, 0, 1)
+    local col = frac > 0.5 and mix(GOLD, L.GREEN, (frac - 0.5) * 2) or mix(RED, GOLD, frac * 2)
+    if h.hp > h.max then col = SKY end
+    local low = h.alive and frac < 0.35
+    local pulse = low and (0.55 + 0.45 * sin(t * 9)) or 1
+    L.pt(F.iconL, "♥", x + p.pad, y + 5, 28, col, 255 * pulse)
+    L.pt(F.big, h.hpS, x + p.pad + 26, y + 4, 30, low and col or p.txt)
+    -- bar: the white part shows what was just lost
+    local bx, by, bw = x + p.pad, y + H - 14, 146 - p.pad
+    local shown = anim("hpbar", frac, 14)
+    local ghost = anim("hpghost", frac, 3)
+    rect(bx, by, bw, 5, p.track, 220)
+    if ghost > shown + 0.005 then rect(bx, by, bw * ghost, 5, C_WHITE, 170) end
+    rect(bx, by, bw * shown, 5, col, 255 * pulse)
+    if not ammo then return end
+    rect(x + 158, y + 10, 1, H - 20, p.dim, 70)
+    local rx = x + W - p.pad
+    if h.clip >= 0 then
+        local rs = h.res >= 0 and h.resS or ""
+        local rw = rs ~= "" and textW(p.f, rs) + 14 or 0
+        if rs ~= "" then
+            L.pt(p.f, rs, rx - rw + 14, y + 12, 26, p.dim)
+            L.pt(p.f, "/", rx - rw + 2, y + 12, 26, p.dim)
+        end
+        L.pt(F.big, h.clipS, rx - rw - 4 - textW(F.big, h.clipS), y + 9, 30, h.clip == 0 and RED or p.txt)
+    elseif h.res >= 0 then
+        L.pt(F.big, h.resS, rx - textW(F.big, h.resS), y + 9, 30, h.res == 0 and RED or p.txt)
+    else
+        L.pt(F.big, "—", rx - textW(F.big, "—"), y + 9, 30, p.dim)
+    end
+    L.pt(F.tiny, "AMMO", x + 168, y + H - 19, 14, p.dim)
+end
+
+-- killstreak counter
+L.KS_BANNERS = { [5] = "KILLING SPREE", [10] = "UNSTOPPABLE", [15] = "GODLIKE", [20] = "LEGENDARY", [25] = "BEYOND GODLIKE" }
+function L.ksColor(n, t)
+    if n >= 20 then return sampleStops(logoStops(6), t * 0.3) end
+    if n >= 15 then return L.HOT end
+    if n >= 10 then return L.ORANGE end
+    if n >= 5 then return GOLD end
+    if n >= 3 then return accent() end
+    return C_WHITE
+end
+function L.drawStreak()
+    local n = me.streak
+    local a = anim("ksA", (n >= settings.ksMin or menu.open) and 1 or 0, 10)
+    if a < 0.02 then return end
+    local sw, sh = draw.GetScreenSize()
+    local W, H = 130, 72
+    local x, y = draggable("ks", sw / 2 - W / 2, sh * 0.7, W, H)
+    local t = now()
+    local col = L.ksColor(n, t)
+    local u = clamp((t - (L.ksAt or -9)) / 0.4, 0, 1)
+    local cxm = x + W / 2
+    ALPHA = a
+    if u < 1 then L.thickRing(cxm, y + 28, 18 + 34 * easeOut(u), 3, col, 210 * (1 - u)) end
+    textC(F.ksN, L.num(n), cxm, y + 4 - (1 - easeOutBack(u)) * 12, 46, col)
+    textC(F.tiny, "KILLSTREAK", cxm + 1, y + 53, 16, C_BLACK, 190)
+    textC(F.tiny, "KILLSTREAK", cxm, y + 52, 16, mix(C_WHITE, col, 0.35))
+    if settings.ksBanner and L.ksBannerAt then
+        local b = t - L.ksBannerAt
+        if b < 2.6 then
+            local ba = easeOut(b / 0.25) * clamp((2.6 - b) / 0.5, 0, 1)
+            ALPHA = a * ba
+            local by = y + H + 2 + (1 - easeOut(b / 0.3)) * 10
+            local bw = textW(F.bold, L.ksBannerS) + 28
+            roundRect(cxm - bw / 2, by, bw, 26, 13, C_BLACK, 150)
+            roundRectLine(cxm - bw / 2, by, bw, 26, 13, col, 200)
+            textC(F.bold, L.ksBannerS, cxm, by, 26, col)
+        end
+    end
+    ALPHA = 1
+end
+
+-- round summary: slides in under the top of the screen when a round ends
+function L.drawRound()
+    if not L.rsAt then return end
+    local t = now()
+    local age = t - L.rsAt
+    local life = settings.rsTime
+    if age > life then L.rsAt = nil; return end
+    local sw = draw.GetScreenSize()
+    local st = settings.phStyle
+    local W, H = 420, 104
+    local x, y = draggable("rs", sw / 2 - W / 2, 130, W, H)
+    local aIn = easeOut(age / 0.35)
+    local a = aIn * clamp((life - age) / 0.5, 0, 1)
+    y = round(y - (1 - aIn) * 24)
+    local p = L.palFor(st, settings.phGrad)
+    ALPHA = a
+    L.panelBg(st, x, y, W, H, nil, settings.phBorder, settings.phGrad)
+    local tc = (L.rsWin == true) and L.GREEN or ((L.rsWin == false) and RED or p.c)
+    local tw = textW(F.big, L.rsTitle)
+    L.pt(F.big, L.rsTitle, x + W / 2 - tw / 2, y + 8, 30, tc)
+    rect(x + W / 2 - 60 * aIn, y + 42, 120 * aIn, 2, tc, 200)
+    local cwid = (W - 20) / 5
+    for i, r in ipairs(L.rsRows) do
+        local ccx = x + 10 + (i - 0.5) * cwid
+        -- each number arrives a little after the one before
+        local ia = easeOut((age - 0.15 - i * 0.07) / 0.3)
+        ALPHA = a * ia
+        L.pt(p.fb, r[2], ccx - textW(p.fb, r[2]) / 2, y + 50 + (1 - ia) * 6, 24, i == 1 and p.c or p.txt)
+        L.pt(F.tiny, r[1], ccx - textW(F.tiny, r[1]) / 2, y + 76, 16, p.dim)
+    end
+    -- time left
+    ALPHA = a
+    rect(x + 14, y + H - 5, (W - 28) * (1 - age / life), 2, tc, 150)
+    ALPHA = 1
+end
+
+-- red (or any colour) screen edges while my health is low, beating like a heart
+function L.drawLowHealth()
+    local h = L.hp
+    local thr = settings.lhAt / 100
+    local frac = h.hp / h.max
+    local k = anim("lowhp", (h.alive and frac < thr) and (1 - frac / thr * 0.6) or 0, 6)
+    if k < 0.01 then return end
+    local c = L.hex(settings.colLow) or L.HOT
+    local beat = 1
+    if settings.lhPulse then
+        local ph = (now() * (1.1 + (1 - frac / thr) * 0.9)) % 1
+        beat = 0.5 + 0.5 * max(math.exp(-((ph - 0.1) ^ 2) / 0.004), 0.7 * math.exp(-((ph - 0.32) ^ 2) / 0.006))
+    end
+    local _, sh = draw.GetScreenSize()
+    local a = 255 * settings.lhInt / 100 * k * beat
+    local size = sh * (0.14 + 0.1 * k)
+    edgeFade("top", size, c, a * 0.8)
+    edgeFade("bottom", size, c, a)
+    edgeFade("left", size * 1.3, c, a * 0.9)
+    edgeFade("right", size * 1.3, c, a * 0.9)
+end
+
+-- custom crosshair
+L.CH_SHAPES = { "Cross", "Cross + dot", "Dot", "Circle", "Circle + dot", "T shape", "X", "Square" }
+L.CH_ANIMS = { "Off", "Pulse", "Spin", "Breathing gap", "Heartbeat", "Blink" }
+
+-- one arm along the screen axes (sharp), dir: 0 right, 1 down, 2 left, 3 up
+function L.chArmAA(cx, cy, dir, r0, len, th, c, a, ol)
+    local x, y, w, h
+    local o = floor(th / 2)
+    if dir == 0 then x, y, w, h = cx + r0, cy - o, len, th
+    elseif dir == 1 then x, y, w, h = cx - o, cy + r0, th, len
+    elseif dir == 2 then x, y, w, h = cx - r0 - len, cy - o, len, th
+    else x, y, w, h = cx - o, cy - r0 - len, th, len end
+    if ol then rect(x - 1, y - 1, w + 2, h + 2, C_BLACK, a * 0.85) end
+    rect(x, y, w, h, c, a)
+end
+-- one arm at any angle
+function L.chArm(cx, cy, ang, r0, r1, th, c, a, ol)
+    local dx, dy = cos(ang), sin(ang)
+    if ol then L.seg(cx + dx * (r0 - 1), cy + dy * (r0 - 1), cx + dx * (r1 + 1), cy + dy * (r1 + 1), th + 2, C_BLACK, a * 0.85) end
+    L.seg(cx + dx * r0, cy + dy * r0, cx + dx * r1, cy + dy * r1, th, c, a)
+end
+
+-- the game's own crosshair is hidden while ours is shown, and put back afterwards
+function L.chCvar(off)
+    local want = (not off) and settings.chOn and settings.chHide
+    if want == (L.chHidden or false) then return end
+    if want then
+        local ok, v = pcall(client.GetConVar, "crosshair")
+        L.chOld = (ok and tonumber(v)) or 1
+        if L.chOld == 0 then L.chOld = 1 end
+        pcall(client.SetConVar, "crosshair", 0)
+    else
+        pcall(client.SetConVar, "crosshair", L.chOld or 1)
+    end
+    L.chHidden = want
+end
+
+function L.drawCrosshair()
+    L.chCvar()
+    if not settings.chOn or not L.hp.alive then return end
+    local okU, ui = pcall(engine.IsGameUIVisible)
+    if okU and ui then return end
+    L.screenSpace()
+    local sw, sh = draw.GetScreenSize()
+    local cx, cy = floor(sw / 2), floor(sh / 2)
+    local t = now()
+    local sp = settings.chSpeed / 5
+    local size, gap, th = settings.chSize, settings.chGap, settings.chThick
+    local rot, alpha, scale = 0, 255 * settings.chAlpha / 100, 1
+    local an = settings.chAnim
+    if an == 2 then scale = 1 + 0.22 * sin(t * 4 * sp)
+    elseif an == 3 then rot = (t * 1.6 * sp) % (2 * pi)
+    elseif an == 4 then gap = gap + (0.5 + 0.5 * sin(t * 3 * sp)) * max(3, size * 0.5)
+    elseif an == 5 then
+        local ph = (t * 1.2 * sp) % 1
+        scale = 1 + 0.35 * max(math.exp(-((ph - 0.1) ^ 2) / 0.004), 0.7 * math.exp(-((ph - 0.32) ^ 2) / 0.006))
+    elseif an == 6 then alpha = alpha * (0.3 + 0.7 * (0.5 + 0.5 * sin(t * 5 * sp))) end
+    if settings.chMove then gap = gap + anim("chmove", min(1, L.hp.speed / 400), 10) * 8 end
+    if settings.chFire then gap = gap + anim("chfire", (mouse.held and not menu.open) and 1 or 0, 18) * 4 end
+
+    local c = L.hex(settings.colCh) or C_WHITE
+    local gs = L.gradStops(settings.chGrad)
+    if gs then c = sampleStops(gs, t * 0.25) end
+    local hk = 1 - clamp((t - (L.chHitAt or -9)) / 0.22, 0, 1)
+    if settings.chHit and hk > 0 then
+        gap = gap + hk * hk * 6
+        c = mix(c, L.hex(settings.colHit) or RED, hk)
+    end
+    local kk = 1 - clamp((t - (L.chKillAt or -9)) / 0.45, 0, 1)
+    if settings.chKill and kk > 0 then
+        c = mix(c, L.hex(settings.colKill) or L.GREEN, kk)
+        rot = rot + (1 - easeOut(1 - kk)) * pi / 2
+        L.thickRing(cx, cy, gap + size + 16 * (1 - kk), 2, c, alpha * 0.8 * kk)
+    end
+    size, gap = size * scale, gap * scale
+
+    local shape = settings.chShape
+    local ol = settings.chOutline
+    if shape == 1 or shape == 2 or shape == 6 or shape == 7 then
+        if shape == 7 then rot = rot + pi / 4 end
+        for i = 0, 3 do
+            if not (shape == 6 and i == 3) then
+                if rot == 0 then L.chArmAA(cx, cy, i, round(gap), round(size), th, c, alpha, ol)
+                else L.chArm(cx, cy, rot + i * pi / 2, gap, gap + size, th, c, alpha, ol) end
+            end
+        end
+    elseif shape == 4 or shape == 5 then
+        local r = gap + size / 2
+        if ol then
+            ring(cx, cy, r + th / 2 + 1, C_BLACK, alpha * 0.85, 40)
+            ring(cx, cy, r - th / 2 - 1, C_BLACK, alpha * 0.85, 40)
+        end
+        L.thickRing(cx, cy, r, th, c, alpha)
+    elseif shape == 8 then
+        local hf = round(gap + size / 2)
+        if ol then
+            rect(cx - hf - 1, cy - hf - 1, 2 * hf + 2, th + 2, C_BLACK, alpha * 0.85)
+            rect(cx - hf - 1, cy + hf - th - 1, 2 * hf + 2, th + 2, C_BLACK, alpha * 0.85)
+            rect(cx - hf - 1, cy - hf - 1, th + 2, 2 * hf + 2, C_BLACK, alpha * 0.85)
+            rect(cx + hf - th - 1, cy - hf - 1, th + 2, 2 * hf + 2, C_BLACK, alpha * 0.85)
+        end
+        rect(cx - hf, cy - hf, 2 * hf, th, c, alpha)
+        rect(cx - hf, cy + hf - th, 2 * hf, th, c, alpha)
+        rect(cx - hf, cy - hf, th, 2 * hf, c, alpha)
+        rect(cx + hf - th, cy - hf, th, 2 * hf, c, alpha)
+    end
+    if shape == 3 then
+        local r = max(1, round(size / 3))
+        if ol then disc(cx, cy, r + 1, C_BLACK, alpha * 0.85) end
+        disc(cx, cy, r, c, alpha)
+    elseif shape == 2 or shape == 5 then
+        local o = floor(th / 2)
+        if ol then rect(cx - o - 1, cy - o - 1, th + 2, th + 2, C_BLACK, alpha * 0.85) end
+        rect(cx - o, cy - o, th, th, c, alpha)
+    end
+end
+
+---------------------------------------------------------------------------
 -- 9. Menu background effects
 ---------------------------------------------------------------------------
 L.EMBER_GLOW = { 255, 90, 20 }
@@ -3894,6 +4498,61 @@ local PAGES = {
         end)
         paraCard("Kills within the multi kill time count up: KILL, DOUBLE KILL, TRIPLE KILL ... up to GODLIKE. The number in the emblem is your killstreak.")
     end },
+    { group = "VISUALS", icon = "▣", name = "Player HUD", draw = function()
+        section("Look")
+        dropRow("Look of these HUDs", "phStyle", L.HUD_STYLES)
+        dropRow("Border", "phBorder", L.BORDERS)
+        dropRow("Gradient", "phGrad", L.GRADS)
+        section("Session stats")
+        toggleRow("Show the session card (kills, deaths, K/D, time)", "ssOn")
+        buttonRow("Start the session over", "Reset", function()
+            local s = L.ss
+            s.kills, s.deaths, s.assists, s.best, s.dmg, s.t0, L.ssAt = 0, 0, 0, 0, 0, now(), nil
+        end)
+        section("Killfeed")
+        toggleRow("Show my kills and deaths", "kfOn")
+        toggleRow("Also show assists", "kfAssists")
+        sliderRow("An entry stays", "kfTime", 3, 15, "s")
+        section("Health and ammo")
+        toggleRow("Show my health", "hpOn")
+        toggleRow("With ammo", "hpAmmo")
+        section("Killstreak counter")
+        toggleRow("Show the killstreak counter", "ksOn")
+        sliderRow("Show from", "ksMin", 1, 5, " kills")
+        toggleRow("Banner at 5, 10, 15, 20 and 25", "ksBanner")
+        section("Round summary")
+        toggleRow("Show a summary when a round ends", "rsOn")
+        sliderRow("Stays on screen", "rsTime", 4, 15, "s")
+        buttonRow("See what it looks like", "Preview", function() L.roundEnd(0, true) end)
+        section("Low health")
+        toggleRow("Colour the screen edges when my health is low", "lhOn")
+        sliderRow("Starts below", "lhAt", 10, 60, "%")
+        sliderRow("Strength", "lhInt", 10, 100, "%")
+        toggleRow("Beat like a heart", "lhPulse")
+        colorRow("Colour", "colLow", L.HOT)
+        paraCard("Drag any of these anywhere while the menu is open. The killfeed only shows what you did and what happened to you.")
+    end },
+    { group = "VISUALS", icon = "⌖", name = "Crosshair", draw = function()
+        section("Crosshair")
+        toggleRow("Show the custom crosshair", "chOn")
+        toggleRow("Hide the game's own crosshair", "chHide")
+        dropRow("Shape", "chShape", L.CH_SHAPES)
+        sliderRow("Size", "chSize", 1, 30, "px")
+        sliderRow("Gap", "chGap", 0, 20, "px")
+        sliderRow("Thickness", "chThick", 1, 8, "px")
+        sliderRow("Opacity", "chAlpha", 20, 100, "%")
+        toggleRow("Black outline", "chOutline")
+        colorRow("Colour", "colCh", C_WHITE)
+        dropRow("Gradient (flowing colours)", "chGrad", L.GRADS)
+        section("Animation")
+        dropRow("Always running", "chAnim", L.CH_ANIMS)
+        if settings.chAnim > 1 then sliderRow("Speed", "chSpeed", 1, 10, "") end
+        toggleRow("Opens while I move", "chMove")
+        toggleRow("Opens while I hold fire", "chFire")
+        toggleRow("Kicks and changes colour on a hit", "chHit")
+        toggleRow("Spins with a ring on a kill", "chKill")
+        paraCard("Drawn in the middle of the screen while you are alive. Hit and kill colours are the ones from Hit effects. If the game's crosshair ever stays hidden, type crosshair 1 in the console.")
+    end },
     { group = "VISUALS", icon = "☀", name = "World", draw = function()
         section("World look")
         toggleRow("Recolour the world", "worldOn")
@@ -3960,6 +4619,7 @@ local PAGES = {
         dropRow("Waifu", "compChar", names(L.COMPANIONS))
         sliderRow("Size", "compSize", 50, 200, "%")
         toggleRow("Speech bubbles (kills, deaths, classes, weapons)", "compBubbles")
+        toggleRow("Also reacts to dominations, round ends, low health, respawns", "compReact")
         buttonRow("Make her say something", "Talk", function()
             local old = settings.compBubbles
             settings.compBubbles = true; compSay("idle"); settings.compBubbles = old
@@ -4069,16 +4729,16 @@ local function drawMenu(openT)
             ny = ny + 22
         end
         local nx, nw = x + 12, SIDE_W - 24
-        if not dropdown and takeClick(nx, ny, nw, 30) then
+        if not dropdown and takeClick(nx, ny, nw, 27) then
             if menu.page ~= i then menu.page, menu.scrollT = i, 0 end
         end
         local act = anim("nav" .. i, menu.page == i and 1 or 0, 14)
-        local hv = anim("navh" .. i, (not dropdown and inside(mouse.x, mouse.y, nx, ny, nw, 30)) and 1 or 0, 14)
-        roundRect(nx, ny, nw, 30, 9, mix(mix(T.side, T.hover, hv * 0.6), T.active, act))
-        if act > 0.01 then roundRect(nx, ny + 7, 3, 16 * act, 2, acc) end
-        text(F.icon, p.icon, nx + 14, ny, 30, menu.page == i and acc or T.muted)
-        text(F.small, p.name, nx + 40, ny, 30, menu.page == i and T.text or T.text2)
-        ny = ny + 32
+        local hv = anim("navh" .. i, (not dropdown and inside(mouse.x, mouse.y, nx, ny, nw, 27)) and 1 or 0, 14)
+        roundRect(nx, ny, nw, 27, 9, mix(mix(T.side, T.hover, hv * 0.6), T.active, act))
+        if act > 0.01 then roundRect(nx, ny + 6, 3, 15 * act, 2, acc) end
+        text(F.icon, p.icon, nx + 14, ny, 27, menu.page == i and acc or T.muted)
+        text(F.small, p.name, nx + 40, ny, 27, menu.page == i and T.text or T.text2)
+        ny = ny + 28
     end
 
     -- "Save config" button at the bottom of the sidebar
@@ -4217,6 +4877,8 @@ local function onDraw()
     end
 
     -- game-world effects first
+    safe("self", L.pollSelf)
+    if settings.lhOn then safe("low health", L.drawLowHealth) end
     safe("screen effect", L.drawEdgeEffect)
     safe("extra effect", L.drawExtraEffect)
     if settings.dmgOn then safe("damage", drawDamage) end
@@ -4225,6 +4887,12 @@ local function onDraw()
     if settings.flOn then safe("hud", L.drawHud) end
     if settings.imOn then safe("input monitor", drawInputMonitor) end
     if settings.sgOn then safe("speed graph", L.drawSpeedGraph) end
+    if settings.chOn or L.chHidden then safe("crosshair", L.drawCrosshair) end
+    if settings.ssOn then safe("stats", L.drawStats) end
+    if settings.kfOn then safe("killfeed", L.drawFeed) end
+    if settings.hpOn then safe("health", L.drawVitals) end
+    if settings.ksOn then safe("killstreak", L.drawStreak) end
+    if settings.rsOn then safe("round summary", L.drawRound) end
     if settings.compOn then safe("waifu", drawCompanion) end
     safe("notifications", drawNotifications)
     safe("welcome", L.drawWelcome)
@@ -4246,6 +4914,7 @@ callbacks.Register("Unload", "destiny_unload", function()
     saveConfig("autosave")
     if menu.cursor then pcall(input.SetMouseInputEnabled, false) end
     if settings.worldOn then applyWorld(true) end
+    pcall(L.chCvar, true)
     pcall(draw.DeleteTexture, WHITE)
     for _, t in pairs(shapeTex) do pcall(draw.DeleteTexture, t.id) end
     L.boxClear()
