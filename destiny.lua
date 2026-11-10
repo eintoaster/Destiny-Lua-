@@ -115,8 +115,8 @@ local DEFAULTS = {
     paiIdle = true, paiIdleEvery = 90, compReact = true,
     -- player HUDs
     phStyle = 1, phBorder = 1, phGrad = 1,
-    ssOn = false, kfOn = false, kfTime = 6, kfAssists = true, hpOn = false, hpAmmo = true,
-    ksOn = true, ksMin = 2, ksBanner = true, rsOn = true, rsTime = 8,
+    ssOn = false, kfOn = false, kfTime = 6, kfAssists = true, kfHide = false, hpOn = false, hpAmmo = true,
+    ksOn = true, ksStyle = 1, ksMin = 2, ksBanner = true, rsOn = true, rsTime = 8,
     lhOn = true, lhAt = 35, lhInt = 60, lhPulse = true, colLow = "",
     -- crosshair
     chOn = false, chShape = 1, chSize = 7, chGap = 4, chThick = 2, chAlpha = 100, chOutline = true, colCh = "", chGrad = 1,
@@ -915,7 +915,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611102320"
+L.BUILD = "202611102333"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -3594,8 +3594,25 @@ function L.drawStats()
     end
 end
 
+-- the game's own killfeed is hidden by giving its entries no time on screen, and put back afterwards
+function L.kfCvar(off)
+    local want = (not off) and settings.kfOn and settings.kfHide
+    if want == (L.kfHidden or false) then return end
+    if want then
+        local ok, v = pcall(client.GetConVar, "hud_deathnotice_time")
+        L.kfOld = (ok and tonumber(v)) or 6
+        if L.kfOld <= 0 then L.kfOld = 6 end
+        pcall(client.SetConVar, "hud_deathnotice_time", 0)
+    else
+        pcall(client.SetConVar, "hud_deathnotice_time", L.kfOld or 6)
+    end
+    L.kfHidden = want
+end
+
 -- killfeed: only what I did and what happened to me
 function L.drawFeed()
+    L.kfCvar()
+    if not settings.kfOn then return end
     local f = L.feed
     local t = now()
     local life = settings.kfTime
@@ -3694,34 +3711,105 @@ function L.ksColor(n, t)
     if n >= 3 then return accent() end
     return C_WHITE
 end
+L.KS_STYLES = { "Emblem", "Simple" }
+L.KS_DARK, L.KS_PIP = { 12, 12, 17 }, { 60, 60, 72 }
+F.ksB = draw.CreateFont("Segoe UI Black", 52, 900, FONTFLAG_ANTIALIAS | FONTFLAG_OUTLINE)
+function L.ksTitle(n)
+    if n >= 25 then return "BEYOND GODLIKE" end
+    if n >= 20 then return "LEGENDARY" end
+    if n >= 15 then return "GODLIKE" end
+    if n >= 10 then return "UNSTOPPABLE" end
+    if n >= 5 then return "KILLING SPREE" end
+    if n >= 3 then return "ON A ROLL" end
+    return "KILLSTREAK"
+end
+
+function L.ksBannerDraw(cxm, by, a, col, t)
+    if not (settings.ksBanner and L.ksBannerAt) then return end
+    local b = t - L.ksBannerAt
+    if b >= 2.6 then return end
+    ALPHA = a * easeOut(b / 0.25) * clamp((2.6 - b) / 0.5, 0, 1)
+    by = by + (1 - easeOut(b / 0.3)) * 10
+    local bw = textW(F.bold, L.ksBannerS) + 28
+    roundRect(cxm - bw / 2, by, bw, 26, 13, C_BLACK, 150)
+    roundRectLine(cxm - bw / 2, by, bw, 26, 13, col, 200)
+    textC(F.bold, L.ksBannerS, cxm, by, 26, col)
+end
+
 function L.drawStreak()
     local n = me.streak
     local a = anim("ksA", (n >= settings.ksMin or menu.open) and 1 or 0, 10)
     if a < 0.02 then return end
     local sw, sh = draw.GetScreenSize()
-    local W, H = 130, 72
-    local x, y = draggable("ks", sw / 2 - W / 2, sh * 0.7, W, H)
     local t = now()
     local col = L.ksColor(n, t)
-    local u = clamp((t - (L.ksAt or -9)) / 0.4, 0, 1)
-    local cxm = x + W / 2
+    local u = clamp((t - (L.ksAt or -9)) / 0.45, 0, 1)
+
+    if settings.ksStyle == 2 then
+        local W, H = 130, 72
+        local x, y = draggable("ks", sw / 2 - W / 2, sh * 0.7, W, H)
+        local cxm = x + W / 2
+        ALPHA = a
+        if u < 1 then L.thickRing(cxm, y + 28, 18 + 34 * easeOut(u), 3, col, 210 * (1 - u)) end
+        textC(F.ksN, L.num(n), cxm, y + 4 - (1 - easeOutBack(u)) * 12, 46, col)
+        textC(F.tiny, "KILLSTREAK", cxm + 1, y + 53, 16, C_BLACK, 190)
+        textC(F.tiny, "KILLSTREAK", cxm, y + 52, 16, mix(C_WHITE, col, 0.35))
+        L.ksBannerDraw(cxm, y + H + 2, a, col, t)
+        ALPHA = 1
+        return
+    end
+
+    local W, H, R = 140, 118, 31
+    local x, y = draggable("ks", sw / 2 - W / 2, sh * 0.68, W, H)
+    local cxm, cym = x + W / 2, y + 44
+    local tier = min(5, n // 5)
+    local breathe = 0.5 + 0.5 * sin(t * (2 + tier))
     ALPHA = a
-    if u < 1 then L.thickRing(cxm, y + 28, 18 + 34 * easeOut(u), 3, col, 210 * (1 - u)) end
-    textC(F.ksN, L.num(n), cxm, y + 4 - (1 - easeOutBack(u)) * 12, 46, col)
-    textC(F.tiny, "KILLSTREAK", cxm + 1, y + 53, 16, C_BLACK, 190)
-    textC(F.tiny, "KILLSTREAK", cxm, y + 52, 16, mix(C_WHITE, col, 0.35))
-    if settings.ksBanner and L.ksBannerAt then
-        local b = t - L.ksBannerAt
-        if b < 2.6 then
-            local ba = easeOut(b / 0.25) * clamp((2.6 - b) / 0.5, 0, 1)
-            ALPHA = a * ba
-            local by = y + H + 2 + (1 - easeOut(b / 0.3)) * 10
-            local bw = textW(F.bold, L.ksBannerS) + 28
-            roundRect(cxm - bw / 2, by, bw, 26, 13, C_BLACK, 150)
-            roundRectLine(cxm - bw / 2, by, bw, 26, 13, col, 200)
-            textC(F.bold, L.ksBannerS, cxm, by, 26, col)
+    -- glow, stronger with every tier
+    disc(cxm, cym, R + 14 + 3 * breathe, col, 14 + tier * 5)
+    disc(cxm, cym, R + 7 + 2 * breathe, col, 26 + tier * 7)
+    -- embers rising from the emblem from 5 kills on
+    if tier >= 1 then
+        for i = 1, 4 + tier * 2 do
+            local ph = (t * (0.55 + (i % 3) * 0.12) + i * 0.37) % 1
+            local ex = cxm + sin(i * 2.4 + t * 1.3) * R * 0.75 * (1 - ph * 0.4)
+            disc(ex, cym - R * 0.5 - ph * 46, 3.2 * (1 - ph) + 1, mix(col, GOLD, ph), 210 * (1 - ph))
         end
     end
+    disc(cxm, cym, R, L.KS_DARK, 225)
+    L.thickRing(cxm, cym, R, 3, col, 235)
+    ring(cxm, cym, R - 5, col, 70, 40)
+    -- dots circling the emblem, more of them at higher tiers
+    local dots = 2 + tier * 2
+    for i = 1, dots do
+        local ang = t * (1.2 + tier * 0.25) + i * (2 * pi / dots)
+        disc(cxm + cos(ang) * (R + 7), cym + sin(ang) * (R + 7), 2, col, 230)
+    end
+    -- a kill: shockwave, sparks flying off, the number jumps
+    if u < 1 then
+        local e = easeOut(u)
+        L.thickRing(cxm, cym, R + 6 + 40 * e, 3, col, 220 * (1 - u))
+        for i = 0, 11 do
+            local ang = i * (pi / 6) + 0.26
+            local r0, len = R + 6 + 34 * e, 9 * (1 - u)
+            line(cxm + cos(ang) * r0, cym + sin(ang) * r0, cxm + cos(ang) * (r0 + len), cym + sin(ang) * (r0 + len), C_WHITE, 255 * (1 - u))
+        end
+    end
+    local big = u < 0.3
+    textC(big and F.ksB or F.ksN, L.num(n), cxm, cym - (big and 31 or 25) - (1 - easeOutBack(u)) * 6, big and 60 or 48, col)
+    if u < 0.5 then textC(big and F.ksB or F.ksN, L.num(n), cxm, cym - (big and 31 or 25), big and 60 or 48, C_WHITE, 200 * (1 - u * 2)) end
+    -- five pips: how far to the next tier
+    local filled = n % 5
+    for i = 1, 5 do
+        local px = cxm + (i - 3) * 13
+        disc(px, y + 88, 4, C_BLACK, 170)
+        disc(px, y + 88, 3, i <= filled and col or L.KS_PIP, 255)
+        if i == filled and u < 1 then disc(px, y + 88, 3 + 5 * (1 - u), col, 150 * (1 - u)) end
+    end
+    local title = L.ksTitle(n)
+    textC(F.tiny, title, cxm + 1, y + 99, 16, C_BLACK, 200)
+    textC(F.tiny, title, cxm, y + 98, 16, mix(C_WHITE, col, 0.55))
+    L.ksBannerDraw(cxm, y + H + 4, a, col, t)
     ALPHA = 1
 end
 
@@ -3801,8 +3889,15 @@ end
 -- one arm at any angle
 function L.chArm(cx, cy, ang, r0, r1, th, c, a, ol)
     local dx, dy = cos(ang), sin(ang)
-    if ol then L.seg(cx + dx * (r0 - 1), cy + dy * (r0 - 1), cx + dx * (r1 + 1), cy + dy * (r1 + 1), th + 2, C_BLACK, a * 0.85) end
-    L.seg(cx + dx * r0, cy + dy * r0, cx + dx * r1, cy + dy * r1, th, c, a)
+    local nx, ny = -dy, dx
+    if ol then
+        local e = th / 2 + 0.5
+        local ax, ay, bx, by = cx + dx * (r0 - 1), cy + dy * (r0 - 1), cx + dx * (r1 + 1), cy + dy * (r1 + 1)
+        for o = -e, e, 0.5 do line(ax + nx * o, ay + ny * o, bx + nx * o, by + ny * o, C_BLACK, a * 0.6) end
+    end
+    local hw = (th - 1) / 2
+    local ax, ay, bx, by = cx + dx * r0, cy + dy * r0, cx + dx * r1, cy + dy * r1
+    for o = -hw, hw, 0.5 do line(ax + nx * o, ay + ny * o, bx + nx * o, by + ny * o, c, a) end
 end
 
 -- the game's own crosshair is hidden while ours is shown, and put back afterwards
@@ -3904,6 +3999,7 @@ end
 -- 9. Menu background effects
 ---------------------------------------------------------------------------
 L.EMBER_GLOW = { 255, 90, 20 }
+L.RD_STOPS, L.RD_CORE = { { 124, 108, 255 }, { 158, 146, 255 }, { 99, 102, 241 } }, { 228, 224, 255 }
 L.BG_FX = { "Off", "Embers", "Snow", "Rain", "Fireflies", "Stars", "Radiance sparkles", "Radiance ribbons", "Silentium" }
 local particles, particleKind = {}, nil
 
@@ -3961,10 +4057,15 @@ local function drawBackground(openT)
                 end
             else
                 p.y = p.y - 25 * p.sp * dt
-                local tw = 0.5 + 0.5 * sin(t * 3 + p.ph)
-                local c = sampleStops({ { 124, 108, 255 }, { 158, 146, 255 }, { 99, 102, 241 } }, p.ph / 6.28)
-                disc(p.x, p.y, p.s + 2, c, 35 * tw)
-                disc(p.x, p.y, p.s * 0.6, { 220, 215, 255 }, 230 * tw)
+                local tw = 0.5 + 0.5 * sin(t * 3 * p.sp + p.ph)
+                local c = sampleStops(L.RD_STOPS, (p.ph / 6.28) % 1)
+                disc(p.x, p.y, p.s * 2 + 4, c, 80 * tw)
+                disc(p.x, p.y, max(2, p.s), L.RD_CORE, 255 * tw)
+                if p.s > 2 then
+                    local r = 5 + p.s * 2 * tw
+                    line(p.x - r, p.y, p.x + r, p.y, L.RD_CORE, 170 * tw)
+                    line(p.x, p.y - r, p.x, p.y + r, L.RD_CORE, 170 * tw)
+                end
                 if p.y < -5 then particles[i] = spawnParticle(kind, sw, sh, false) end
             end
         end
@@ -4528,12 +4629,14 @@ local PAGES = {
         section("Killfeed")
         toggleRow("Show my kills and deaths", "kfOn")
         toggleRow("Also show assists", "kfAssists")
+        toggleRow("Hide the game's own killfeed", "kfHide")
         sliderRow("An entry stays", "kfTime", 3, 15, "s")
         section("Health and ammo")
         toggleRow("Show my health", "hpOn")
         toggleRow("With ammo", "hpAmmo")
         section("Killstreak counter")
         toggleRow("Show the killstreak counter", "ksOn")
+        dropRow("Look", "ksStyle", L.KS_STYLES)
         sliderRow("Show from", "ksMin", 1, 5, " kills")
         toggleRow("Banner at 5, 10, 15, 20 and 25", "ksBanner")
         section("Round summary")
@@ -4546,7 +4649,7 @@ local PAGES = {
         sliderRow("Strength", "lhInt", 10, 100, "%")
         toggleRow("Beat like a heart", "lhPulse")
         colorRow("Colour", "colLow", L.HOT)
-        paraCard("Drag any of these anywhere while the menu is open. The killfeed only shows what you did and what happened to you.")
+        paraCard("Drag any of these anywhere while the menu is open. The killfeed only shows what you did and what happened to you. If the game's killfeed ever stays hidden, type hud_deathnotice_time 6 in the console.")
     end },
     { group = "VISUALS", icon = "⌖", name = "Crosshair", draw = function()
         section("Crosshair")
@@ -4905,7 +5008,7 @@ local function onDraw()
     if settings.sgOn then safe("speed graph", L.drawSpeedGraph) end
     if settings.chOn or L.chHidden then safe("crosshair", L.drawCrosshair) end
     if settings.ssOn then safe("stats", L.drawStats) end
-    if settings.kfOn then safe("killfeed", L.drawFeed) end
+    if settings.kfOn or L.kfHidden then safe("killfeed", L.drawFeed) end
     if settings.hpOn then safe("health", L.drawVitals) end
     if settings.ksOn then safe("killstreak", L.drawStreak) end
     if settings.rsOn then safe("round summary", L.drawRound) end
@@ -4931,6 +5034,7 @@ callbacks.Register("Unload", "destiny_unload", function()
     if menu.cursor then pcall(input.SetMouseInputEnabled, false) end
     if settings.worldOn then applyWorld(true) end
     pcall(L.chCvar, true)
+    pcall(L.kfCvar, true)
     pcall(draw.DeleteTexture, WHITE)
     for _, t in pairs(shapeTex) do pcall(draw.DeleteTexture, t.id) end
     L.boxClear()
