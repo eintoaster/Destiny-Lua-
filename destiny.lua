@@ -916,7 +916,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611110000"
+L.BUILD = "202611110005"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -1147,6 +1147,11 @@ end
 
 local function onGameEvent(e)
     local name = e:GetName()
+    if name == "game_newmap" or name == "server_spawn" or name == "client_beginconnect" or name == "client_connected" then
+        L.sky.rushUntil = now() + 30
+        L.sky.enforce()
+        return
+    end
     if name == "teamplay_round_start" then L.roundStart(); return end
     if name == "teamplay_round_win" then
         if settings.rsOn then L.roundEnd(e:GetInt("team") or 0) end
@@ -4188,10 +4193,8 @@ local function applyWorld(off)
     end)
 end
 
--- own sky: TF2's skies by name, plus every full set of 6 pictures found in tf/materials/skybox
-L.SKY_TF = { "sky_night_01", "sky_halloween", "sky_upward", "sky_dustbowl_01", "sky_goldrush_01", "sky_tf2_04", "sky_hydro_01",
-             "sky_badlands_01", "sky_well_01", "sky_gravel_01", "sky_harvest_01", "sky_alpinestorm_01", "sky_morningsnow_01",
-             "sky_nightfall_01", "sky_stormfront_01" }
+-- own sky: one of TF2's skies, plus every full set of 6 pictures found in tf/materials/skybox
+L.SKY_TF = { "sky_night_01" }
 L.SKY_FACES = { rt = true, lf = true, bk = true, ft = true, up = true, dn = true }
 L.SKY_DIR = "tf/materials/skybox/"
 L.sky = { list = {}, names = {}, own = 0, scanned = false }
@@ -4261,12 +4264,12 @@ function L.sky.restore()
     S.last = nil
 end
 
--- 4 times a second: keep the game's sky name on ours (a new map puts its own back), and repaint once
--- two seconds into a map and once more a little later
-function L.sky.tick(map, since)
+-- the game loads the sky named in sv_skyname when a map starts, and a new map puts its own name back:
+-- ours is set again 4 times a second, and every frame while a map is loading
+function L.sky.enforce()
     local S = L.sky
     local want = settings.skyOn and settings.skyName ~= "" and settings.skyName or nil
-    if not want then S.restore(); return end
+    if not want then return nil end
     local ok, _, _, cur = pcall(client.GetConVar, "sv_skyname")
     cur = (ok and type(cur) == "string") and cur or nil
     if cur ~= want then
@@ -4275,8 +4278,17 @@ function L.sky.tick(map, since)
         S.last = want
     end
     S.active = true
-    if map == "" or now() - since < 2 then return end
-    local key = want .. "|" .. map .. ((now() - since > 8) and "|2" or "|1")
+    return want
+end
+
+-- a sky that is already on screen is repainted 2, 6 and 15 seconds into a map and when another one is picked
+function L.sky.tick(map, since)
+    local S = L.sky
+    local want = S.enforce()
+    if not want then S.restore(); return end
+    local age = now() - since
+    if map == "" or age < 2 then return end
+    local key = want .. "|" .. map .. ((age > 15) and "|3" or ((age > 6) and "|2" or "|1"))
     if key ~= S.shown then
         S.shown = key
         S.paint(want)
@@ -4848,11 +4860,15 @@ local PAGES = {
         dropRow("Sky", "skySel", S.names)
         settings.skyName = S.list[settings.skySel] or ""
         infoRow("Your own skies found", tostring(S.own))
+        buttonRow("Sky not showing on this map? Join the server again", "Rejoin", function()
+            L.sky.rushUntil = now() + 30
+            pcall(client.Command, "retry", true)
+        end)
         buttonRow("Look for new skies in the folder", "Rescan", function()
             L.sky.scan()
             notify("☀", "Skies rescanned", L.sky.own .. " of your own found", accent())
         end)
-        paraCard("The first skies in the list are TF2's own. Yours are marked with a star: put the 6 .vtf pictures of a sky (ending in rt, lf, bk, ft, up, dn) into Team Fortress 2\\tf\\materials\\skybox and press Rescan. If the sky doesn't change at once, it changes on the next map. Servers that block custom files show the map's own sky.")
+        paraCard("Yours are marked with a star: put the 6 .vtf pictures of a sky (ending in rt, lf, bk, ft, up, dn) into Team Fortress 2\\tf\\materials\\skybox and press Rescan. The game loads the sky when a map starts, so a sky picked in the middle of a map may only show after Rejoin or on the next map. Servers that block custom files show the map's own sky.")
     end },
 
     { group = "MISC", icon = "✎", name = "Appearance", draw = function()
@@ -5130,6 +5146,9 @@ local function onDraw()
         else pcall(collectgarbage, "generational", 20, 100) end
     end
     L.boxFrame()
+    if L.sky.rushUntil and settings.skyOn then
+        if now() < L.sky.rushUntil then L.sky.enforce() else L.sky.rushUntil = nil end
+    end
     if engine.IsTakingScreenshot() then return end
     L.buildPalette()
 
