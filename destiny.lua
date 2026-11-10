@@ -106,6 +106,7 @@ local DEFAULTS = {
     kaOn = true, kaStyle = 2, kaWindow = 4, kaSound = true, kaColor = 1, colKa = "",
     -- world
     worldOn = false, worldPreset = 1, worldHue = 260, worldBright = 80, worldSky = true, worldProps = true,
+    skyOn = false, skyName = "", skySel = 1,
     -- overlay HUD, input monitor, speed graph
     flOn = false, flStyle = 1, flBorder = 1, flGrad = 1, flCompact = false, flKeys = true,
     imOn = false, imStyle = 1, imBg = true, sgOn = false, sgStyle = 1, sgBg = true,
@@ -915,7 +916,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611102350"
+L.BUILD = "202611110000"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -4187,10 +4188,106 @@ local function applyWorld(off)
     end)
 end
 
+-- own sky: TF2's skies by name, plus every full set of 6 pictures found in tf/materials/skybox
+L.SKY_TF = { "sky_night_01", "sky_halloween", "sky_upward", "sky_dustbowl_01", "sky_goldrush_01", "sky_tf2_04", "sky_hydro_01",
+             "sky_badlands_01", "sky_well_01", "sky_gravel_01", "sky_harvest_01", "sky_alpinestorm_01", "sky_morningsnow_01",
+             "sky_nightfall_01", "sky_stormfront_01" }
+L.SKY_FACES = { rt = true, lf = true, bk = true, ft = true, up = true, dn = true }
+L.SKY_DIR = "tf/materials/skybox/"
+L.sky = { list = {}, names = {}, own = 0, scanned = false }
+
+function L.sky.scan()
+    local S = L.sky
+    local count, order = {}, {}
+    pcall(filesystem.EnumerateDirectory, L.SKY_DIR .. "*", function(fn)
+        local base, face = tostring(fn):match("^(.+)(%a%a)%.[vV][tT][fF]$")
+        if base and L.SKY_FACES[face:lower()] then
+            if not count[base] then count[base] = 0; order[#order + 1] = base end
+            count[base] = count[base] + 1
+        end
+    end)
+    table.sort(order)
+    local list, shown = {}, {}
+    for i, n in ipairs(L.SKY_TF) do list[i], shown[i] = n, n end
+    S.own = 0
+    for _, base in ipairs(order) do
+        if count[base] >= 6 then
+            S.own = S.own + 1
+            list[#list + 1] = base
+            shown[#shown + 1] = "★ " .. (base:gsub("[_%-%s]+$", ""))
+            -- a set without its small text files gets them written
+            for face in pairs(L.SKY_FACES) do
+                local p = L.SKY_DIR .. base .. face .. ".vmt"
+                local ok, f = pcall(io.open, p, "r")
+                if ok and f then f:close()
+                else
+                    local okW, w = pcall(io.open, p, "w")
+                    if okW and w then
+                        w:write('"UnlitGeneric"\n{\n\t"$basetexture" "skybox/' .. base .. face .. '"\n\t"$ignorez" "1"\n\t"$nofog" "1"\n}\n')
+                        w:close()
+                    end
+                end
+            end
+        end
+    end
+    S.list, S.names, S.scanned = list, shown, true
+    settings.skySel = 1
+    for i, n in ipairs(list) do
+        if n == settings.skyName then settings.skySel = i end
+    end
+end
+
+-- the pictures of the sky that is on screen right now are pointed at another sky
+function L.sky.paint(name)
+    pcall(materials.Enumerate, function(mat)
+        if mat:GetTextureGroupName() == "SkyBox textures" then
+            local n = mat:GetName():lower()
+            local face = n:sub(-2)
+            if L.SKY_FACES[face] and n:find("skybox", 1, true) then
+                mat:SetShaderParam("$basetexture", "skybox/" .. name .. face)
+            end
+        end
+    end)
+end
+
+function L.sky.restore()
+    local S = L.sky
+    if not S.active then return end
+    S.active, S.shown = false, nil
+    if S.orig then
+        pcall(client.SetConVar, "sv_skyname", S.orig)
+        S.paint(S.orig)
+    end
+    S.last = nil
+end
+
+-- 4 times a second: keep the game's sky name on ours (a new map puts its own back), and repaint once
+-- two seconds into a map and once more a little later
+function L.sky.tick(map, since)
+    local S = L.sky
+    local want = settings.skyOn and settings.skyName ~= "" and settings.skyName or nil
+    if not want then S.restore(); return end
+    local ok, _, _, cur = pcall(client.GetConVar, "sv_skyname")
+    cur = (ok and type(cur) == "string") and cur or nil
+    if cur ~= want then
+        if cur and cur ~= "" and cur ~= S.last then S.orig = cur end
+        pcall(client.SetConVar, "sv_skyname", want)
+        S.last = want
+    end
+    S.active = true
+    if map == "" or now() - since < 2 then return end
+    local key = want .. "|" .. map .. ((now() - since > 8) and "|2" or "|1")
+    if key ~= S.shown then
+        S.shown = key
+        S.paint(want)
+    end
+end
+
 L.worldCheckAt = 0
 local function updateWorld()
     if now() - L.worldCheckAt < 0.25 then return end
     L.worldCheckAt = now()
+    L.sky.tick(engine.GetMapName() or "", world.mapSince)
     local map = engine.GetMapName() or ""
     if map ~= world.map then world.map, world.mapSince, world.key, world.again = map, now(), nil, false end
     if map == "" or now() - world.mapSince < 2 then return end
@@ -4744,6 +4841,18 @@ local PAGES = {
         toggleRow("Sky too", "worldSky")
         toggleRow("Props too", "worldProps")
         paraCard("Applies by itself on every map while it is on, and again a few seconds in for anything that loads late.")
+        section("Sky")
+        local S = L.sky
+        if not S.scanned then S.scan() end
+        toggleRow("Use another sky", "skyOn")
+        dropRow("Sky", "skySel", S.names)
+        settings.skyName = S.list[settings.skySel] or ""
+        infoRow("Your own skies found", tostring(S.own))
+        buttonRow("Look for new skies in the folder", "Rescan", function()
+            L.sky.scan()
+            notify("☀", "Skies rescanned", L.sky.own .. " of your own found", accent())
+        end)
+        paraCard("The first skies in the list are TF2's own. Yours are marked with a star: put the 6 .vtf pictures of a sky (ending in rt, lf, bk, ft, up, dn) into Team Fortress 2\\tf\\materials\\skybox and press Rescan. If the sky doesn't change at once, it changes on the next map. Servers that block custom files show the map's own sky.")
     end },
 
     { group = "MISC", icon = "✎", name = "Appearance", draw = function()
@@ -5096,6 +5205,7 @@ callbacks.Register("Unload", "destiny_unload", function()
     saveConfig("autosave")
     if menu.cursor then pcall(input.SetMouseInputEnabled, false) end
     if settings.worldOn then applyWorld(true) end
+    pcall(L.sky.restore)
     pcall(L.chCvar, true)
     pcall(L.kfCvar, true)
     pcall(L.hpCvar, true)
