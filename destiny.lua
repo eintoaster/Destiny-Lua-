@@ -916,7 +916,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611110436"
+L.BUILD = "202611110446"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -5000,12 +5000,13 @@ local PAGES = {
             notify("☀", "Skies rescanned", L.sky.own .. " of your own found", accent())
         end)
         L.previewCard(settings.skyName)
-        section("Sky library")
+        section("yeko's Skies")
+        paraCard("Downloads custom skyboxes from my GitHub.")
         local B = L.lib
         if not B.names then
-            buttonRow("Show the skies that can be downloaded", "Load", B.load)
+            buttonRow("Show yeko's skies", "Load", B.load)
         else
-            dropRow("Sky (" .. #B.names .. " on GitHub)", "libSel", B.shown)
+            dropRow("Sky to download (" .. #B.names .. ")", "libSel", B.shown)
             local pick = B.names[settings.libSel] or ""
             if B.state == "downloading" then
                 infoRow("Downloading " .. B.name, min(6, B.face) .. " / 6")
