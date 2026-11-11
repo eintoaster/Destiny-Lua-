@@ -106,7 +106,7 @@ local DEFAULTS = {
     kaOn = true, kaStyle = 2, kaWindow = 4, kaSound = true, kaColor = 1, colKa = "",
     -- world
     worldOn = false, worldPreset = 1, worldHue = 260, worldBright = 80, worldSky = true, worldProps = true,
-    skyOn = false, skyName = "", skySel = 1,
+    skyOn = false, skyName = "", skySel = 1, libSel = 1,
     -- overlay HUD, input monitor, speed graph
     flOn = false, flStyle = 1, flBorder = 1, flGrad = 1, flCompact = false, flKeys = true,
     imOn = false, imStyle = 1, imBg = true, sgOn = false, sgStyle = 1, sgBg = true,
@@ -916,7 +916,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611110012"
+L.BUILD = "202611110436"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -4199,6 +4199,16 @@ L.SKY_FACES = { rt = true, lf = true, bk = true, ft = true, up = true, dn = true
 L.SKY_DIR = "tf/materials/skybox/"
 L.sky = { list = {}, names = {}, own = 0, scanned = false }
 
+function L.sky.writeVmt(base)
+    for face in pairs(L.SKY_FACES) do
+        local okW, w = pcall(io.open, L.SKY_DIR .. base .. face .. ".vmt", "w")
+        if okW and w then
+            w:write('"UnlitGeneric"\n{\n\t"$basetexture" "skybox/' .. base .. face .. '"\n\t"$ignorez" "1"\n\t"$nofog" "1"\n}\n')
+            w:close()
+        end
+    end
+end
+
 function L.sky.scan()
     local S = L.sky
     local count, order = {}, {}
@@ -4219,18 +4229,8 @@ function L.sky.scan()
             list[#list + 1] = base
             shown[#shown + 1] = "★ " .. (base:gsub("[_%-%s]+$", ""))
             -- a set without its small text files gets them written
-            for face in pairs(L.SKY_FACES) do
-                local p = L.SKY_DIR .. base .. face .. ".vmt"
-                local ok, f = pcall(io.open, p, "r")
-                if ok and f then f:close()
-                else
-                    local okW, w = pcall(io.open, p, "w")
-                    if okW and w then
-                        w:write('"UnlitGeneric"\n{\n\t"$basetexture" "skybox/' .. base .. face .. '"\n\t"$ignorez" "1"\n\t"$nofog" "1"\n}\n')
-                        w:close()
-                    end
-                end
-            end
+            local ok, f = pcall(io.open, L.SKY_DIR .. base .. "dn.vmt", "r")
+            if ok and f then f:close() else L.sky.writeVmt(base) end
         end
     end
     S.list, S.names, S.scanned = list, shown, true
@@ -4277,6 +4277,137 @@ function L.sky.tick(map)
     if now() - S.pendAt < 1 then return end
     S.told = want
     notify("☀", "Sky picked", "It shows after Rejoin (World page) or on the next map", accent())
+end
+
+-- sky library: the skies kept on GitHub as text copies (lmaobox can only download text), 6 pictures each,
+-- plus a small preview strip per sky
+L.SKY_REPO = "https://raw.githubusercontent.com/eintoaster/skyboxes/main/"
+L.SKY_ORDER = { "rt", "lf", "bk", "ft", "up", "dn" }
+L.lib = { names = nil, shown = nil, state = "idle", face = 0, name = "", tex = {}, texN = 0 }
+
+function L.lib.has(name)
+    local ok, f = pcall(io.open, L.SKY_DIR .. name .. "dn.vtf", "rb")
+    if ok and f then f:close(); return true end
+    return false
+end
+
+function L.lib.mark()
+    local B = L.lib
+    B.shown, B.own = {}, {}
+    for i, n in ipairs(B.names) do
+        B.own[n] = B.has(n)
+        B.shown[i] = (B.own[n] and "✓ " or "") .. n
+    end
+end
+
+function L.lib.load()
+    local B = L.lib
+    local ok, body = pcall(http.Get, L.SKY_REPO .. "index.txt")
+    if not ok or type(body) ~= "string" or body:sub(1, 3) == "404" or #body < 3 then
+        notify("✖", "Can't load the sky list", "GitHub didn't answer", RED)
+        return
+    end
+    B.names = {}
+    for line in body:gmatch("[^\r\n]+") do
+        local n = line:match("^([%w_]+)$")
+        if n then B.names[#B.names + 1] = n end
+    end
+    if #B.names == 0 then B.names = nil; notify("✖", "Can't load the sky list", "the list is empty", RED); return end
+    B.mark()
+    settings.libSel = clamp(settings.libSel, 1, #B.names)
+end
+
+function L.lib.start()
+    local B = L.lib
+    if B.state == "downloading" or not B.names then return end
+    local name = B.names[settings.libSel]
+    if not name then return end
+    pcall(filesystem.CreateDirectory, "tf/materials")
+    pcall(filesystem.CreateDirectory, "tf/materials/skybox")
+    B.state, B.name, B.face, B.job, B.why = "downloading", name, 0, nil, nil
+end
+
+function L.lib.fail(why)
+    local B = L.lib
+    if B.job and B.job.fh then pcall(B.job.fh.close, B.job.fh) end
+    B.state, B.job, B.why = "failed", nil, why
+    notify("✖", "Sky download failed", why, RED)
+end
+
+-- every frame while downloading: fetch the next picture (the game stops for a moment), then turn the text
+-- back into the file about 3 ms at a time
+function L.lib.work()
+    local B = L.lib
+    local job = B.job
+    if not job then
+        B.face = B.face + 1
+        local face = L.SKY_ORDER[B.face]
+        if not face then
+            L.sky.writeVmt(B.name)
+            B.state = "done"
+            settings.skyName = B.name
+            L.sky.scan()
+            B.mark()
+            notify("☀", "Skybox downloaded", B.name .. (settings.skyOn and " is now your sky" or " is picked: turn on Use another sky"), accent())
+            return
+        end
+        local ok, data = pcall(http.Get, L.SKY_REPO .. "sky/" .. B.name .. "/" .. face .. ".b64")
+        if not ok or type(data) ~= "string" or #data < 1000 then return B.fail(face .. ": no answer from GitHub") end
+        if L.paimon.b64(data, 1, 4) ~= "VTF" then return B.fail(face .. ": not a sky picture") end
+        local okF, fh = pcall(io.open, L.SKY_DIR .. B.name .. face .. ".vtf", "wb")
+        if not okF or not fh then return B.fail("can't write into tf/materials/skybox") end
+        B.job = { data = data, pos = 1, fh = fh }
+        return
+    end
+    local t0, n = L.clock(), #job.data
+    repeat
+        local j = min(n, job.pos + 49151)
+        job.fh:write(L.paimon.b64(job.data, job.pos, j))
+        job.pos = j + 1
+    until job.pos > n or (L.clock() - t0) > 0.003
+    if job.pos > n then
+        job.fh:close()
+        B.job = nil
+    end
+end
+
+-- preview strip of a sky: kept as a small picture in destiny_files/skybox, fetched once
+function L.lib.preview(name)
+    local B = L.lib
+    if name == "" then return nil end
+    local id = B.tex[name]
+    if id ~= nil then return id or nil end
+    -- wait until the choice has stopped changing
+    if B.pvName ~= name then B.pvName, B.pvAt = name, now(); return nil end
+    if now() - B.pvAt < 0.35 then return nil end
+    if not B.dir then
+        local ok, gd = pcall(engine.GetGameDir)
+        B.dir = ((ok and gd) and tostring(gd) or ""):gsub("[\\/]tf[\\/]?$", "") .. "\\destiny_files\\skybox\\"
+        pcall(filesystem.CreateDirectory, "destiny_files")
+        pcall(filesystem.CreateDirectory, "destiny_files/skybox")
+    end
+    local rel = "destiny_files/skybox/" .. name .. ".png"
+    local okF, f = pcall(io.open, rel, "rb")
+    if okF and f then f:close()
+    else
+        local ok, data = pcall(http.Get, L.SKY_REPO .. "preview/" .. name .. ".b64")
+        local png = (ok and type(data) == "string" and #data > 200) and L.paimon.b64(data, 1, #data) or ""
+        if png:sub(2, 4) ~= "PNG" then B.tex[name] = false; return nil end
+        local okW, w = pcall(io.open, rel, "wb")
+        if not okW or not w then B.tex[name] = false; return nil end
+        w:write(png); w:close()
+    end
+    if B.texN >= 24 then B.clear() end
+    local okT, tid = pcall(draw.CreateTexture, B.dir .. name .. ".png")
+    L.recolor()
+    B.tex[name] = (okT and tid) or false
+    B.texN = B.texN + 1
+    return B.tex[name] or nil
+end
+
+function L.lib.clear()
+    for _, id in pairs(L.lib.tex) do if id then pcall(draw.DeleteTexture, id) end end
+    L.lib.tex, L.lib.texN = {}, 0
 end
 
 L.worldCheckAt = 0
@@ -4682,6 +4813,22 @@ function L.runProbe()
 end
 
 -- pages ---------------------------------------------------------------------------
+-- the preview strip of a sky: four sides next to each other
+function L.previewCard(name)
+    local h = floor((cw - 16) / 4)
+    if rowVisible(h + 16) then
+        card(nil, h + 16)
+        local id = L.lib.preview(name)
+        if id then
+            color(C_WHITE)
+            draw.TexturedRect(id, round(cx + 8), round(cy + 8), round(cx + cw - 8), round(cy + 8 + h))
+        else
+            textC(F.small, L.lib.tex[name] == false and "No preview for this sky" or "Loading the preview...", cx + cw / 2, cy, h + 16, T.muted)
+        end
+    end
+    cy = cy + h + 26
+end
+
 local PAGES = {
     { group = "VISUALS", icon = "◷", name = "Watermark", draw = function()
         section("Watermark")
@@ -4852,7 +4999,23 @@ local PAGES = {
             L.sky.scan()
             notify("☀", "Skies rescanned", L.sky.own .. " of your own found", accent())
         end)
-        paraCard("Yours are marked with a star: put the 6 .vtf pictures of a sky (ending in rt, lf, bk, ft, up, dn) into Team Fortress 2\\tf\\materials\\skybox and press Rescan. The game only loads a sky when a map starts: after picking one, press Rejoin or wait for the next map. Turning it off works the same way. Servers that block custom files show the map's own sky.")
+        L.previewCard(settings.skyName)
+        section("Sky library")
+        local B = L.lib
+        if not B.names then
+            buttonRow("Show the skies that can be downloaded", "Load", B.load)
+        else
+            dropRow("Sky (" .. #B.names .. " on GitHub)", "libSel", B.shown)
+            local pick = B.names[settings.libSel] or ""
+            if B.state == "downloading" then
+                infoRow("Downloading " .. B.name, min(6, B.face) .. " / 6")
+            else
+                buttonRow(B.own[pick] and "Already in your folder" or "Download this sky (about 4 MB, the game pauses briefly)",
+                          B.own[pick] and "Again" or "Download", B.start)
+            end
+            L.previewCard(pick)
+        end
+        paraCard("Skies in your folder are marked with a star. To add one by hand, put the 6 .vtf pictures of a sky (ending in rt, lf, bk, ft, up, dn) into Team Fortress 2\\tf\\materials\\skybox and press Rescan. The game only loads a sky when a map starts: after picking one, press Rejoin or wait for the next map. Turning it off works the same way. Servers that block custom files show the map's own sky.")
     end },
 
     { group = "MISC", icon = "✎", name = "Appearance", draw = function()
@@ -5163,6 +5326,7 @@ local function onDraw()
 
     safe("features", pollFeatures)
     if L.paimon.state == "downloading" then safe("paimon install", L.paimon.work) end
+    if L.lib.state == "downloading" then safe("sky download", L.lib.work) end
     safe("world", updateWorld)
     -- auto-update: the menu is already up and usable
     if not updater.checked and now() >= updater.startAt then
@@ -5209,6 +5373,7 @@ callbacks.Register("Unload", "destiny_unload", function()
     if menu.cursor then pcall(input.SetMouseInputEnabled, false) end
     if settings.worldOn then applyWorld(true) end
     pcall(L.sky.restore)
+    pcall(L.lib.clear)
     pcall(L.chCvar, true)
     pcall(L.kfCvar, true)
     pcall(L.hpCvar, true)
