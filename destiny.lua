@@ -916,7 +916,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611110448"
+L.BUILD = "202611110454"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -4814,6 +4814,146 @@ function L.runProbe()
 end
 
 -- pages ---------------------------------------------------------------------------
+-- sky preview window: the four sides of a sky as one wide picture that can be dragged around.
+-- three sizes (small, normal, whole screen), in the menu's colours
+L.pv = { open = false, name = "", mode = 2, pan = 0, x = nil, y = nil, tex = nil, texName = nil,
+         q = { { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 1 }, { 0, 0, 0, 1 } } }
+L.PV_SIZES = { { 360, 180 }, { 720, 360 } }
+
+function L.pv.free()
+    local V = L.pv
+    if V.tex then pcall(draw.DeleteTexture, V.tex) end
+    V.tex, V.texName = nil, nil
+end
+
+function L.pv.show(name)
+    local V = L.pv
+    if not name or name == "" then return end
+    if V.texName ~= name then
+        V.free()
+        pcall(filesystem.CreateDirectory, "destiny_files")
+        pcall(filesystem.CreateDirectory, "destiny_files/skybox")
+        local ok, gd = pcall(engine.GetGameDir)
+        local dir = ((ok and gd) and tostring(gd) or ""):gsub("[\\/]tf[\\/]?$", "") .. "\\destiny_files\\skybox\\"
+        local rel = "destiny_files/skybox/" .. name .. "_wide.jpg"
+        local okF, f = pcall(io.open, rel, "rb")
+        if okF and f then f:close()
+        else
+            local okG, data = pcall(http.Get, L.SKY_REPO .. "pano/" .. name .. ".b64")
+            local jpg = (okG and type(data) == "string" and #data > 500) and L.paimon.b64(data, 1, #data) or ""
+            if jpg:byte(1) ~= 255 or jpg:byte(2) ~= 216 then
+                notify("✖", "No preview for this sky", name, RED)
+                return
+            end
+            local okW, w = pcall(io.open, rel, "wb")
+            if not okW or not w then notify("✖", "Can't save the preview", "destiny_files/skybox", RED); return end
+            w:write(jpg); w:close()
+        end
+        local okT, id = pcall(draw.CreateTexture, dir .. name .. "_wide.jpg")
+        L.recolor()
+        if not okT or not id then notify("✖", "Can't show the preview", name, RED); return end
+        V.tex, V.texName = id, name
+    end
+    V.name, V.open = name, true
+    if V.mode == 3 then V.mode = 2 end
+end
+
+-- where the window is: x, y, w, h and the height of its title bar
+function L.pv.rect()
+    local V = L.pv
+    local sw, sh = draw.GetScreenSize()
+    if V.mode == 3 then return 0, 0, sw, sh, 36 end
+    local sz = L.PV_SIZES[V.mode]
+    local w, h = sz[1], sz[2] + 36
+    if not V.x then V.x, V.y = sw - w - 40, 80 end
+    V.x, V.y = clamp(V.x, 0, max(0, sw - w)), clamp(V.y, 0, max(0, sh - h))
+    return V.x, V.y, w, h, 36
+end
+
+-- runs before the menu so a click on the window doesn't reach what is under it
+function L.pv.input()
+    local V = L.pv
+    local x, y, w, h, th = V.rect()
+    if not mouse.held then V.dragWin, V.dragPan = false, false end
+    if V.dragWin then V.x, V.y = mouse.x - V.dx, mouse.y - V.dy end
+    if V.dragPan then
+        V.pan = V.panAt - (mouse.x - V.dx) / ((h - th) * 4)
+        V.moved = now()
+    end
+    if dropdown or not inside(mouse.x, mouse.y, x, y, w, h) then return end
+    local bx = x + w - 34
+    if takeClick(bx, y + 6, 26, 24) then V.open = false; V.free(); return end
+    if takeClick(bx - 30, y + 6, 26, 24) then
+        if V.mode == 3 then V.mode = V.back or 2 else V.back, V.mode = V.mode, 3 end
+    elseif takeClick(bx - 60, y + 6, 26, 24) then
+        if V.mode == 3 then V.mode = V.back or 2 elseif V.mode == 2 then V.mode = 1 else V.mode = 2 end
+    elseif V.mode ~= 3 and takeClick(x, y, w, th) then
+        V.dragWin, V.dx, V.dy = true, mouse.x - x, mouse.y - y
+    elseif takeClick(x, y + th, w, h - th) then
+        V.dragPan, V.dx, V.panAt = true, mouse.x, V.pan
+    end
+    mouse.used = true
+    mouse.wheel = 0
+end
+
+function L.pv.button(bx, by, glyph, hot)
+    local hv = inside(mouse.x, mouse.y, bx, by, 26, 24)
+    if hv then roundRect(bx, by, 26, 24, 7, hot and RED or T.hover) end
+    textC(F.icon, glyph, bx + 13, by, 24, hv and T.text or T.text2)
+end
+
+function L.pv.draw()
+    local V = L.pv
+    local x, y, w, h, th = V.rect()
+    local full = V.mode == 3
+    local r = full and 0 or 14
+    local acc = accent()
+    if not full then
+        roundRect(x - 2, y + 4, w + 4, h + 2, 16, C_BLACK, 90)
+        roundRect(x, y, w, h, r, T.win)
+        roundRect(x, y, w, th + 14, r, T.side)
+        rect(x, y + th, w, 14, T.win)
+    else
+        rect(x, y, w, h, T.win)
+        rect(x, y, w, th, T.side)
+    end
+    -- the picture: as much of the ring as fits, wrapped around at the end
+    local px, py, pw, ph = x + (full and 0 or 6), y + th, w - (full and 0 or 12), h - th - (full and 0 or 6)
+    if not V.dragPan and now() - (V.moved or -9) > 2 then V.pan = V.pan + frameDt() * 0.012 end
+    V.pan = V.pan % 1
+    local span = min(1, pw / (ph * 4))
+    if V.tex then
+        color(C_WHITE)
+        local u0, left = V.pan, span
+        local cxp = px
+        while left > 0.0001 do
+            local part = min(left, 1 - u0)
+            local wpx = pw * part / span
+            local q = V.q
+            local x1, x2 = round(cxp), round(cxp + wpx)
+            q[1][1], q[1][2], q[1][3] = x1, round(py), u0
+            q[2][1], q[2][2], q[2][3] = x2, round(py), u0 + part
+            q[3][1], q[3][2], q[3][3] = x2, round(py + ph), u0 + part
+            q[4][1], q[4][2], q[4][3] = x1, round(py + ph), u0
+            draw.TexturedPolygon(V.tex, q, true)
+            cxp, left, u0 = cxp + wpx, left - part, 0
+        end
+    end
+    -- title bar
+    rect(x + (full and 0 or 12), y + th - 1, w - (full and 0 or 24), 1, acc, 170)
+    text(F.icon, "☀", x + 14, y, th, acc)
+    text(F.bold, fit(F.bold, V.name, w - 150), x + 38, y, th, T.text)
+    local bx = x + w - 34
+    L.pv.button(bx, y + 6, "✕", true)
+    L.pv.button(bx - 30, y + 6, full and "❐" or "☐", false)
+    L.pv.button(bx - 60, y + 6, (V.mode == 1) and "+" or "–", false)
+    if not full then roundRectLine(x, y, w, h, r, T.border) end
+    if not V.dragPan and now() - (V.moved or -9) > 2 and V.mode ~= 1 then
+        textC(F.tiny, "drag the picture to look around", x + w / 2 + 1, y + h - 27, 16, C_BLACK, 170)
+        textC(F.tiny, "drag the picture to look around", x + w / 2, y + h - 28, 16, C_WHITE, 200)
+    end
+end
+
 -- the preview strip of a sky: four sides next to each other
 function L.previewCard(name)
     local h = floor((cw - 16) / 4)
@@ -5001,6 +5141,7 @@ local PAGES = {
             notify("☀", "Skies rescanned", L.sky.own .. " of your own found", accent())
         end)
         L.previewCard(settings.skyName)
+        buttonRow("See the picked sky in a window", "Preview", function() L.pv.show(settings.skyName) end)
         section("yeko's Skies")
         paraCard("Downloads custom skyboxes from my GitHub.")
         local B = L.lib
@@ -5016,6 +5157,7 @@ local PAGES = {
                           B.own[pick] and "Again" or "Download", B.start)
             end
             L.previewCard(pick)
+            buttonRow("See how this sky looks before downloading", "Preview", function() L.pv.show(pick) end)
         end
         paraCard("Skies in your folder are marked with a star. To add one by hand, put the 6 .vtf pictures of a sky (ending in rt, lf, bk, ft, up, dn) into Team Fortress 2\\tf\\materials\\skybox and press Rescan. The game only loads a sky when a map starts: after picking one, press Rejoin or wait for the next map. Turning it off works the same way. Servers that block custom files show the map's own sky.")
     end },
@@ -5360,8 +5502,13 @@ local function onDraw()
     if menu.openT > 0.01 then
         safe("background", drawBackground, menu.openT)
         if onMenu then mouse.used = false end
+        if L.pv.open then safe("sky preview input", L.pv.input) end
         ALPHA = menu.openT * settings.opacity / 100
         safe("menu", drawMenu, menu.openT)
+        if L.pv.open then
+            ALPHA = menu.openT
+            safe("sky preview", L.pv.draw)
+        end
     end
 end
 
@@ -5376,6 +5523,7 @@ callbacks.Register("Unload", "destiny_unload", function()
     if settings.worldOn then applyWorld(true) end
     pcall(L.sky.restore)
     pcall(L.lib.clear)
+    pcall(L.pv.free)
     pcall(L.chCvar, true)
     pcall(L.kfCvar, true)
     pcall(L.hpCvar, true)
