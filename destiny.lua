@@ -955,7 +955,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611111850"
+L.BUILD = "202611111853"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -6658,6 +6658,65 @@ function L.previewCard(name)
     cy = cy + h + 26
 end
 
+-- what was added, newest first: shown on the Info page
+L.CHANGELOG = {
+    { "Themes and looks", {
+        "New themes: Royal, Liquid glass (see-through), Moon, Niko OneShot",
+        "The same four as looks for the watermark, notifications and every HUD",
+        "Niko drawn in the OneShot menu and peeking over OneShot panels",
+        "Halloween theme: webs, pumpkins, bats, a spider and a ghost in the menu",
+        "New menu background: Bats",
+    } },
+    { "Pets", {
+        "Pets tab: a pet walks, runs, jumps and crouches along with you",
+        "10 pets: Klee, Mechanical Cat, Chiikawa, Kafka, Elfaria, Lady Avalon,",
+        "2B, Raiden Shogun, Niko and Spice",
+        "Left, right or roaming, with hearts, sparkles and a rain cloud as reactions",
+        "yeko's Pets: download pets from GitHub",
+    } },
+    { "Combat effects", {
+        "Hit particles on the player you hit, 10 styles, own style for hits and kills",
+        "Hitmarker with 5 shapes, gold on headshots",
+        "Bullet tracers and a kill card (name, class, weapon, distance)",
+        "Hit effect styles redrawn: Glow, Pulse, Scanlines, Glitch, Frost, Hard border",
+    } },
+    { "Player HUD", {
+        "Session stats, own killfeed, health and ammo, killstreak emblem",
+        "Round summary, low health screen effect, class meters",
+        "Respawn timer and a match card with the round timer and scores",
+        "Toggles to hide the game's own killfeed, health and ammo",
+        "Domination and revenge notifications",
+    } },
+    { "Crosshair and view", {
+        "Custom crosshair: 8 shapes, animations, reacts to moving, firing, hits and kills",
+        "Viewmodel: weapon position, FOV, no sway, hide weapon",
+        "Movement trail and screen weather",
+    } },
+    { "World", {
+        "Custom skyboxes: your own from tf/materials/skybox",
+        "yeko's Skies: 299 skies to download, with a preview window",
+    } },
+    { "Other", {
+        "More waifu reactions (dominations, round end, low health, respawn)",
+        "Own sounds for hits, kills and killstreaks (tf/sound/destiny_custom)",
+        "Clean mode key and an Open config folder button",
+        "Auto-updater fixed, menu opens and closes smoother",
+    } },
+}
+
+function L.logCard(title, items)
+    local h = 44 + #items * 20
+    if rowVisible(h) then
+        card(nil, h)
+        text(F.bold, title, cx + 16, cy + 8, 24, accent())
+        for i, it in ipairs(items) do
+            disc(cx + 21, cy + 44 + (i - 1) * 20, 2, T.muted)
+            text(F.small, fit(F.small, it, cw - 52), cx + 32, cy + 34 + (i - 1) * 20, 20, T.text2)
+        end
+    end
+    cy = cy + h + 10
+end
+
 local PAGES = {
     { group = "VISUALS", icon = "◷", name = "Watermark", draw = function()
         section("Watermark")
@@ -7075,6 +7134,8 @@ local PAGES = {
         paraCard("Destiny v1 Visual Lua for LMAOBOX. (BETA)")
         paraCard("Discord: yeko333")
         buttonRow("Check for updates", updater.running and "Checking..." or "Check", function() updaterCheck() end)
+        section("Destiny 2.0")
+        for _, e in ipairs(L.CHANGELOG) do L.logCard(e[1], e[2]) end
     end },
 }
 
