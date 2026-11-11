@@ -916,7 +916,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611110454"
+L.BUILD = "202611110519"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -2454,6 +2454,33 @@ function L.rnd(seed, i)
     return x - floor(x)
 end
 
+-- a frame of 4 bars, a given distance in from the screen edges
+function L.frame(inset, th, c, a)
+    local sw, sh = draw.GetScreenSize()
+    rect(inset, inset, sw - 2 * inset, th, c, a)
+    rect(inset, sh - inset - th, sw - 2 * inset, th, c, a)
+    rect(inset, inset + th, th, sh - 2 * inset - 2 * th, c, a)
+    rect(sw - inset - th, inset + th, th, sh - 2 * inset - 2 * th, c, a)
+end
+
+-- an L-shaped bracket in each corner
+function L.brackets(inset, len, th, c, a)
+    local sw, sh = draw.GetScreenSize()
+    for i = 0, 3 do
+        local rx, by = i % 2 == 1, i >= 2
+        local x0, y0 = rx and (sw - inset - len) or inset, by and (sh - inset - th) or inset
+        rect(x0, y0, len, th, c, a)
+        rect(rx and (sw - inset - th) or inset, by and (sh - inset - len) or inset, th, len, c, a)
+    end
+end
+
+-- a band across the screen that fades from one strength to another, top to bottom
+function L.band(y0, y1, c, a0, a1)
+    local sw = draw.GetScreenSize()
+    rawColor(clamp(round(c[1]), 0, 255), clamp(round(c[2]), 0, 255), clamp(round(c[3]), 0, 255), 255)
+    draw.FilledRectFade(0, round(y0), sw, round(y1), clamp(round(a0 * ALPHA), 0, 255), clamp(round(a1 * ALPHA), 0, 255), false)
+end
+
 L.vfx = { t0 = -99, len = 1, power = 0, kill = false, seed = 0 }
 
 function L.drawEdgeEffect()
@@ -2471,14 +2498,31 @@ function L.drawEdgeEffect()
     if settings.vigTintAmt > 0 then rect(0, 0, sw, sh, L.fxColor(kill, 0), settings.vigTintAmt * 2.2 * env * v.power) end
 
     if style == 2 then
-        L.edges(size, a * (0.5 + 0.5 * abs(sin(el * 14))), kill)
+        L.edges(size * 0.6, a * 0.5, kill)
+        for k = 0, 2 do
+            local ph = (el * 1.7 + k / 3) % 1
+            L.frame(easeOut(ph) * size * 1.5, 2 + 6 * (1 - ph), L.fxColor(kill, k / 3), a * (1 - ph))
+        end
     elseif style == 3 then
-        L.edges(size, a, kill)
         local c = L.fxColor(kill, 0)
-        L.scanlines(c, 34 * env * v.power)
+        L.scanlines(c, 70 * env * v.power)
+        L.edges(size * 0.45, a * 0.45, kill)
+        local by = ((el * 1.1) % 1) * (sh + 240) - 120
+        L.band(by - 110, by, c, 0, 110 * env * v.power)
+        L.band(by, by + 30, c, 110 * env * v.power, 0)
+        rect(0, by - 1, sw, 2, C_WHITE, 190 * env)
     elseif style == 4 then
-        L.edges(size, a, kill)
         local frame = floor(el * 22)
+        edgeFade("left", size * 0.5, L.MAGENTA, a * 0.6)
+        edgeFade("right", size * 0.5, L.CYAN, a * 0.6)
+        for i = 1, 6 do
+            local th = 2 + L.rnd(v.seed + frame, i + 100) * 12
+            local ty = L.rnd(v.seed + frame, i + 120) * (sh - th)
+            local off = (L.rnd(v.seed + frame, i + 140) - 0.5) * 80
+            rect(off, ty, sw, th, (i % 2 == 0) and L.CYAN or L.MAGENTA, (22 + 34 * L.rnd(v.seed, i)) * env)
+            rect(off + ((i % 2 == 0) and 8 or -8), ty + th, sw, 1, C_WHITE, 80 * env)
+        end
+        L.brackets(22 + (L.rnd(v.seed + frame, 90) - 0.5) * 14, 54, 3, L.fxColor(kill, 0), 230 * env)
         for i = 1, 8 do
             local bh = 3 + L.rnd(v.seed + frame, i) * 14
             local by = L.rnd(v.seed + frame, i + 20) * (sh - bh)
@@ -2487,8 +2531,28 @@ function L.drawEdgeEffect()
             rect(right and (sw - bw) or 0, by, bw, bh, (i % 2 == 0) and L.CYAN or L.MAGENTA, (70 + 80 * L.rnd(v.seed, i)) * env)
         end
     elseif style == 5 then
-        L.edges(size, a * 0.8, kill)
-        for i = 1, 120 do
+        edgeFade("top", size * 0.9, L.FROST, a * 0.5)
+        edgeFade("bottom", size * 0.9, L.FROST, a * 0.5)
+        edgeFade("left", size * 0.9, L.FROST, a * 0.45)
+        edgeFade("right", size * 0.9, L.FROST, a * 0.45)
+        L.edges(size * 0.45, a * 0.5, kill)
+        L.screenSpace()
+        local grow = easeOut(el / 0.22)
+        for i = 1, 40 do
+            local e = i % 4
+            local p = L.rnd(v.seed, i + 2000)
+            local len = (0.3 + 0.7 * L.rnd(v.seed, i + 2050)) * size * 0.95 * grow
+            local wd = 5 + 13 * L.rnd(v.seed, i + 2090)
+            local skew = (L.rnd(v.seed, i + 2130) - 0.5) * len * 0.9
+            local bx, by, tx, ty, ox, oy
+            if e == 0 then bx, by, tx, ty, ox, oy = p * sw, 0, p * sw + skew, len, wd, 0
+            elseif e == 1 then bx, by, tx, ty, ox, oy = p * sw, sh, p * sw + skew, sh - len, wd, 0
+            elseif e == 2 then bx, by, tx, ty, ox, oy = 0, p * sh, len, p * sh + skew, 0, wd
+            else bx, by, tx, ty, ox, oy = sw, p * sh, sw - len, p * sh + skew, 0, wd end
+            cpoly(L.FROST, (60 + 90 * L.rnd(v.seed, i + 2170)) * env, bx - ox, by - oy, bx + ox, by + oy, tx, ty)
+            line(bx, by, tx, ty, C_WHITE, 210 * env)
+        end
+        for i = 1, 60 do
             local e = floor(L.rnd(v.seed, i) * 4)
             local d = L.rnd(v.seed, i + 300) * size * 0.8
             local px = (e < 2) and L.rnd(v.seed, i + 600) * sw or (e == 2 and d or sw - d)
@@ -2508,6 +2572,7 @@ function L.drawEdgeEffect()
             rect(sw - t, y0, t, y1 - y0 + 1, L.fxColor(kill, 0.25 + (i - 0.5) / n * 0.25), a)
         end
         L.edges(size * 0.6, a * 0.5, kill)
+        L.brackets(t + 8, 70 * easeOutBack(el / 0.2), t + 2, C_WHITE, a)
     elseif style == 7 then
         L.edges(size * 0.7, a * 0.6, kill)
         for k = 0, 2 do
@@ -2576,7 +2641,14 @@ function L.drawEdgeEffect()
             disc(x, y, 1.6, L.EMBER, 230 * fl * env)
         end
     else
-        L.edges(size, a, kill)
+        local br = 0.85 + 0.15 * sin(el * 10)
+        L.edges(size * 1.8, a * 0.38, kill)
+        L.edges(size * 0.5 * br, a, kill)
+        local cr = size * 1.25
+        disc(0, 0, cr, L.fxColor(kill, 0.9), a * 0.3)
+        disc(sw, 0, cr, L.fxColor(kill, 0.15), a * 0.3)
+        disc(sw, sh, cr, L.fxColor(kill, 0.4), a * 0.3)
+        disc(0, sh, cr, L.fxColor(kill, 0.65), a * 0.3)
     end
 end
 L.CYAN, L.MAGENTA, L.FROST, L.EMBER = { 0, 255, 255 }, { 255, 0, 170 }, { 235, 245, 255 }, { 255, 190, 90 }
