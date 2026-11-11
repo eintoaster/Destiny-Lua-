@@ -955,7 +955,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611111853"
+L.BUILD = "202611111904"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -5590,6 +5590,16 @@ L.CLEAN_KEYS = { { "Off" } }
 for i, k in ipairs(L.MENU_KEYS) do L.CLEAN_KEYS[i + 1] = k end
 
 -- the folder the configs are in, opened in Explorer
+function L.configDir()
+    local dir = DIR or ""
+    if not dir:match("^%a:") then
+        local ok, gd = pcall(engine.GetGameDir)
+        local root = ((ok and gd) and tostring(gd) or ""):gsub("[\\/]tf[\\/]?$", "")
+        dir = root .. "\\" .. dir
+    end
+    return (dir:gsub("/", "\\"):gsub("[\\]+$", ""))
+end
+
 function L.openConfigFolder()
     local dir = DIR or ""
     if not dir:match("^%a:") then
@@ -5598,13 +5608,10 @@ function L.openConfigFolder()
         dir = root .. "\\" .. dir
     end
     dir = dir:gsub("/", "\\"):gsub("[\\]+$", "")
-    local ok = os and os.execute and pcall(os.execute, 'start "" explorer "' .. dir .. '"')
-    if ok then
-        notify("▤", "Config folder opened", "Send a friend your destiny_slot file", accent())
-    else
-        print("[destiny] configs are in: " .. dir)
-        notify("▤", "Couldn't open Explorer", "The folder is printed in the console", RED)
-    end
+    -- lmaobox doesn't let scripts open Explorer, so the folder is shown on the page and in the console
+    L.cfgShown = dir
+    print("[destiny] configs are in: " .. dir)
+    notify("▤", "Configs are in", "the path is on this page and in the console", accent())
 end
 
 -- own sounds: every .wav or .mp3 in tf/sound/destiny_custom joins the sound lists --------------------------------
@@ -7121,7 +7128,8 @@ local PAGES = {
         buttonRow("Restore every default (nothing is saved)", "Reset", function()
             L.backup(); resetConfig(); notify("↺", "Defaults restored", "Undo brings your settings back", accent())
         end)
-        buttonRow("Open the config folder (to share configs)", "Open", L.openConfigFolder)
+        buttonRow("Where are my configs? (to share them)", "Show", L.openConfigFolder)
+        if L.cfgShown then paraCard(L.configDir() .. "  —  send a friend your destiny_slot1.cfg (or 2, 3 ...) and they put it in the same folder.") end
         section("Where")
         if DIR then
             paraCard("Configs are saved in: " .. (DIR == "" and "the Team Fortress 2 folder" or DIR) .. "  (autosave when you close the menu)")
