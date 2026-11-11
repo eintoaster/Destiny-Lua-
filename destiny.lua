@@ -916,7 +916,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611110446"
+L.BUILD = "202611110448"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -4675,8 +4675,9 @@ local function drawDropdownList()
     local sw, sh = draw.GetScreenSize()
     local y = d.by + 32
     if y + maxH > sh - 10 then y = d.by - 4 - maxH end
-    d.scroll = d.scroll or 0
     local maxScroll = max(0, full - maxH)
+    -- a long list opens at the entry that is picked, with a few above it
+    d.scroll = d.scroll or clamp(((tonumber(settings[d.key]) or 1) - 4) * rowH, 0, maxScroll)
     if inside(mouse.x, mouse.y, d.x, y, d.w, maxH) then
         if mouse.wheel ~= 0 then d.scroll = clamp(d.scroll - mouse.wheel * rowH, 0, maxScroll); mouse.wheel = 0 end
     end
