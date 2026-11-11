@@ -100,6 +100,7 @@ local DEFAULTS = {
     vigOn = true, vigStyle = 1, vigColor = 1, vigHit = true, vigKill = true, vigInt = 70, vigSize = 14, vigTintAmt = 10,
     vigAnim = false, vigSpeed = 5, vigStay = 900, colHit = "FF2D55", colKill = "10B981",
     fxExtra = 2, fxOnHit = false, fxOnKill = true,
+    ptOn = true, ptStyle = 9, ptKillStyle = 7, ptHit = true, ptKill = true, ptAmt = 100, ptSize = 100, ptCol = 1,
     shakeOn = false, shakeStyle = 1, shakeAmt = 40, shakeOnHit = false,
     dmgOn = true, dmgStyle = 2, hitSound = 1, killSound = 1,
     -- kill announcer
@@ -114,6 +115,16 @@ local DEFAULTS = {
     compOn = false, compChar = 1, compSize = 100, compBubbles = true, compFollow = true,
     paiVoice = true, paiFont = true, paiLogs = true, paiLogTime = 4,
     paiIdle = true, paiIdleEvery = 90, compReact = true,
+    -- pets
+    petOn = false, petSel = 1, petSize = 100, petDist = 60, petSide = 1, petFront = true, petCam = false, petReact = true, pdlSel = 1,
+    -- extras
+    hmOn = false, hmStyle = 1, hmCol = 1, hmSize = 9, hmThick = 2, hmTime = 350, hmHead = true,
+    trOn = false, trStyle = 1, trCol = 1, trTime = 600,
+    kcOn = false, kcTime = 4, cmOn = false, rtOn = false, mcOn = false,
+    trlOn = false, trlStyle = 1, trlCol = 1, trlLen = 6, trlSpeed = 400, trlAlways = false, trlWidth = 6,
+    wxOn = false, wxKind = 1, wxAmt = 40, wxAlpha = 70,
+    vmOn = false, vmX = 0, vmY = 0, vmZ = 0, vmFov = 70, vmSway = false, vmHide = false,
+    cleanKey = 1, ksSound = 1,
     -- player HUDs
     phStyle = 1, phBorder = 1, phGrad = 1,
     ssOn = false, kfOn = false, kfTime = 6, kfAssists = true, kfHide = false, hpOn = false, hpAmmo = true, hpHide = false,
@@ -252,6 +263,22 @@ local THEMES = {
         win = { 17, 9, 24 }, side = { 11, 5, 17 }, card = { 30, 17, 40 }, hover = { 42, 24, 54 },
         border = { 70, 40, 84 }, text = { 252, 240, 228 }, text2 = { 196, 172, 176 }, muted = { 146, 118, 134 },
         off = { 74, 50, 74 }, track = { 60, 38, 68 }, thumb = { 255, 214, 150 }, pill = { 38, 22, 48 }, active = { 66, 34, 58 } } },
+    { name = "Royal", accent = { 255, 92, 170 }, pal = {
+        win = { 14, 9, 22 }, side = { 10, 6, 17 }, card = { 24, 15, 36 }, hover = { 34, 21, 50 },
+        border = { 58, 34, 84 }, text = { 246, 236, 252 }, text2 = { 190, 168, 210 }, muted = { 132, 110, 156 },
+        off = { 58, 40, 80 }, track = { 46, 30, 66 }, thumb = C_WHITE, pill = { 30, 19, 44 }, active = { 70, 30, 88 } } },
+    { name = "Liquid glass", accent = { 110, 180, 255 }, glass = true, pal = {
+        win = { 22, 28, 40 }, side = { 16, 21, 32 }, card = { 255, 255, 255 }, hover = { 70, 82, 106 },
+        border = { 200, 214, 236 }, text = { 255, 255, 255 }, text2 = { 222, 228, 240 }, muted = { 178, 188, 206 },
+        off = { 96, 108, 132 }, track = { 74, 86, 110 }, thumb = C_WHITE, pill = { 34, 42, 60 }, active = { 60, 96, 160 } } },
+    { name = "Niko OneShot", accent = { 255, 205, 80 }, pal = {
+        win = { 30, 16, 40 }, side = { 22, 11, 31 }, card = { 44, 24, 58 }, hover = { 58, 32, 74 },
+        border = { 92, 52, 112 }, text = { 255, 241, 214 }, text2 = { 228, 192, 216 }, muted = { 162, 128, 172 },
+        off = { 72, 44, 88 }, track = { 58, 36, 76 }, thumb = { 255, 238, 176 }, pill = { 38, 21, 50 }, active = { 98, 46, 92 } } },
+    { name = "Moon", accent = { 150, 140, 255 }, pal = {
+        win = { 16, 18, 32 }, side = { 12, 14, 26 }, card = { 22, 25, 42 }, hover = { 30, 34, 56 },
+        border = { 44, 50, 82 }, text = { 234, 236, 252 }, text2 = { 172, 178, 216 }, muted = { 122, 128, 172 },
+        off = { 48, 52, 86 }, track = { 40, 44, 74 }, thumb = C_WHITE, pill = { 26, 29, 50 }, active = { 46, 46, 96 } } },
 }
 
 L.ACCENTS = {
@@ -291,6 +318,18 @@ function L.buildPalette()
         L.hexCache["p" .. settings.colCard] = P.pill
     end
     T = P
+end
+
+function L.isHW()
+    return (THEMES[settings.theme] or THEMES[1]).name == "Halloween"
+end
+
+function L.isNiko()
+    return (THEMES[settings.theme] or THEMES[1]).name == "Niko OneShot"
+end
+
+function L.glassA()
+    return (THEMES[settings.theme] or THEMES[1]).glass and 125 or 255
 end
 
 local function accent()
@@ -631,7 +670,7 @@ local function tsize(font, s)
     setFont(font)
     local w, h = draw.GetTextSize(s)
     L.tszN = L.tszN + 1
-    if L.tszN > 4000 then L.tsz, L.tszN = {}, 0; byF = {}; L.tsz[font] = byF end
+    if L.tszN > 12000 then L.tsz, L.tszN = {}, 0; byF = {}; L.tsz[font] = byF end
     byF[s] = { w, h }
     return w, h
 end
@@ -671,7 +710,7 @@ local function fit(font, s, w)
         r = r .. "…"
     end
     fitCount = fitCount + 1
-    if fitCount > 500 then fitCache, fitCount = {}, 0 end
+    if fitCount > 6000 then fitCache, fitCount = {}, 0 end
     byW[s] = r
     return r
 end
@@ -815,7 +854,7 @@ end
 -- 6. Effects
 ---------------------------------------------------------------------------
 -- 6a. notifications --------------------------------------------------------
-L.NT_STYLES = { "Destiny", "Radiance", "Mercury", "Silentium" }
+L.NT_STYLES = { "Destiny", "Radiance", "Mercury", "Silentium", "Royal", "Liquid glass", "Moon", "OneShot" }
 L.NT_POS = { "Top-Right", "Bottom-Right", "Top-Center", "Bottom-Center", "Top-Left" }
 local notes = {}
 
@@ -916,7 +955,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611110519"
+L.BUILD = "202611111850"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -1166,8 +1205,16 @@ local function onGameEvent(e)
         local weapon = L.weaponName(e:GetString("weapon"))
         if attacker == mine and victim ~= mine then
             onKill(nameOf(victim), L.classOf(victim), weapon, e:GetInt("customkill"), e:GetInt("death_flags") or 0)
+            L.ptSpawn(entities.GetByUserID(victim), true)
+            L.hmHit(false, true)
+            L.killCard(nameOf(victim), L.classOf(victim), weapon, e:GetInt("customkill"), entities.GetByUserID(victim))
+            L.pet.react(L.STREAK_STEPS[me.streak] and "spark" or "heart")
         elseif victim == mine then
             onDeath(nameOf(attacker), L.classOf(attacker), weapon, attacker == mine or attacker == 0, e:GetInt("death_flags") or 0)
+            local suicide = attacker == mine or attacker == 0
+            L.deadInfo = { t0 = now(), line = suicide and "You died" or
+                           ("Killed by " .. nameOf(attacker) .. ((joinParts(L.classOf(attacker), weapon) and ("  •  " .. joinParts(L.classOf(attacker), weapon))) or "")) }
+            L.pet.react("rain")
         elseif e:GetInt("assister") == mine then
             if settings.ntAssists then notify("✚", "Assist on " .. nameOf(victim), joinParts(L.classOf(victim), weapon), SKY) end
             L.trackAssist(nameOf(victim))
@@ -1175,7 +1222,8 @@ local function onGameEvent(e)
     elseif attacker == mine and victim ~= mine then
         local ent = entities.GetByUserID(victim)
         local crit = e:GetInt("crit") == 1
-        if ent then addDamage(ent, e:GetInt("damageamount"), crit) end
+        if ent then addDamage(ent, e:GetInt("damageamount"), crit); L.ptSpawn(ent, false) end
+        L.hmHit(e:GetInt("custom") == 1, false)
         L.paimon.hitLog(nameOf(victim), L.classOf(victim), e:GetInt("damageamount"), e:GetInt("health"), crit)
         vigTrigger(false)
         playFrom(L.HIT_SOUNDS, settings.hitSound)
@@ -1187,7 +1235,7 @@ end
 -- 8. Overlays
 ---------------------------------------------------------------------------
 -- 8a. watermark -------------------------------------------------------------
-L.WM_STYLES = { "Classic", "Radiance", "Mercury", "Silentium" }
+L.WM_STYLES = { "Classic", "Radiance", "Mercury", "Silentium", "Royal", "Liquid glass", "Moon", "OneShot" }
 local fps, fpsAt = 0, 0
 
 local function mapName()
@@ -1307,6 +1355,28 @@ local function drawWatermark()
             cx = cx + 25 + textW(F.small, s)
         end
 
+    elseif style >= 5 then
+        local st = style + 3
+        local p = L.palFor(st, 1)
+        local items = wmCache.items
+        if not items then
+            items = {}
+            for _, q in ipairs(parts) do items[#items + 1] = tostring(q[2]) .. (q[3] and (" " .. q[3]) or "") end
+            wmCache.items = items
+        end
+        local w = 28 + textW(F.rd, "DESTINY")
+        for _, it in ipairs(items) do w = w + 25 + textW(F.small, it) end
+        w = floor((w + 7) / 8) * 8
+        local x, y = draggable("wm", (sw - w) / 2, 12, w, 30)
+        L.panelBg(st, x, y, w, 30, nil, 1, 1)
+        text(F.rd, "DESTINY", x + 14, y, 30, st == 8 and L.RY.title or p.c)
+        local cx = x + 14 + textW(F.rd, "DESTINY")
+        for _, it in ipairs(items) do
+            rect(cx + 12, y + 9, 1, 12, p.dim, 120)
+            text(F.small, it, cx + 25, y, 30, p.txt)
+            cx = cx + 25 + textW(F.small, it)
+        end
+
     else
         local list = { "DESTINY" }
         for _, p in ipairs(parts) do list[#list + 1] = tostring(p[2]) .. (p[3] and (" " .. p[3]:lower()) or "") end
@@ -1374,7 +1444,7 @@ local function pollFeatures()
 end
 
 -- 8c. input monitor -----------------------------------------------------------
-L.IM_STYLES = { "Destiny", "Radiance", "Mercury", "Silentium" }
+L.IM_STYLES = { "Destiny", "Radiance", "Mercury", "Silentium", "Royal", "Liquid glass", "Moon", "OneShot" }
 
 local function drawInputMonitor()
     local sw, sh = draw.GetScreenSize()
@@ -1412,6 +1482,9 @@ local function drawInputMonitor()
             rect(x + 10, y, w - 20, 1, acc, 160)
         end
         text(F.script, "inputs", x + 12, y + 2, 28, mix(acc, C_WHITE, 0.2))
+    elseif style >= 5 then
+        L.palFor(style + 3, 1)
+        if bg then L.panelBg(style + 3, x, y, w, h, nil, 1, 1) end
     else
         if bg then
             roundRect(x, y + 3, w, h, 12, C_BLACK, 70)
@@ -2033,7 +2106,9 @@ function P.font()
     if P.fontId == nil then
         P.fontId = false
         if P.installed() then
-            pcall(draw.AddFontResource, "destiny_files/paimon/Genshin_Impact.ttf")
+            local okD, gd = pcall(engine.GetGameDir)
+            local root = ((okD and gd) and tostring(gd) or ""):gsub("[\\/]tf[\\/]?$", "")
+            pcall(draw.AddFontResource, root .. "\\destiny_files\\paimon\\Genshin_Impact.ttf")
             local ok, id = pcall(draw.CreateFont, "Default_SC", 17, 600, FONTFLAG_ANTIALIAS)
             if ok and id then P.fontId = id end
         end
@@ -2198,6 +2273,19 @@ local function drawNote(n, x, y, w, h, style, idx)
         rect(x + 36, y + 10, 1, h - 20, SL.line)
         text(F.bold, fit(F.bold, n.title, w - 58), x + 46, y + (n.body ~= "" and 7 or 0), n.body ~= "" and 22 or h, gst and col or SL.text)
         if n.body ~= "" then text(F.small, fit(F.small, n.body, w - 58), x + 46, y + 28, 20, SL.dim) end
+    elseif style >= 5 then
+        local st = style + 3
+        local p = L.palFor(st, settings.ntGrad)
+        L.panelBg(st, x, y, w, h, nil, settings.ntBorder == 2 and 1 or settings.ntBorder, settings.ntGrad)
+        local ic = (n.col == RED) and RED or ((st == 8 and not gst) and L.RY.pink or col)
+        disc(x + 30, y + 29, 15, ic, st == 9 and 64 or 46)
+        textC(F.icon, n.icon, x + 30, y + 17, 24, ic)
+        if n.body == "" then
+            text(F.bold, fit(F.bold, n.title, w - 72), x + 58, y + 4, h - 8, p.txt)
+        else
+            text(F.bold, fit(F.bold, n.title, w - 72), x + 58, y + 9, 20, p.txt)
+            text(F.small, fit(F.small, n.body, w - 72), x + 58, y + 29, 18, p.dim)
+        end
     else
         if settings.ntBg then
             roundRect(x - 1, y + 3, w + 2, h, 15, C_BLACK, 50)
@@ -2249,7 +2337,8 @@ local function drawNotifications()
             local gst = L.gradStops(settings.ntGrad)
             local bc = (gst and n.col ~= RED) and sampleStops(gst, now() * 0.12 + idx * 0.1) or n.col
             roundRect(x + 16, y + h - 6, (w - 32) * left, 2.5, 1, bc, 150)
-        elseif style == 4 then rect(x + 10, y + h - 3, (w - 20) * left, 2, n.col, 160) end
+        elseif style == 4 then rect(x + 10, y + h - 3, (w - 20) * left, 2, n.col, 160)
+        elseif style >= 5 then roundRect(x + 20, y + h - 7, (w - 40) * left, 2.5, 1, (style == 5 and n.col ~= RED) and L.RY.pink or n.col, 180) end
         ALPHA = 1
         i = i + 1
     end
@@ -2884,7 +2973,7 @@ end
 ---------------------------------------------------------------------------
 -- 8j. lmaobox HUD
 ---------------------------------------------------------------------------
-L.HUD_STYLES = { "Destiny", "Skeet", "Neverlose", "Radiance", "Mercury", "Gamesense", "Silentium" }
+L.HUD_STYLES = { "Destiny", "Skeet", "Neverlose", "Radiance", "Mercury", "Gamesense", "Silentium", "Royal", "Liquid glass", "Moon", "OneShot" }
 L.BORDERS = { "Off", "Plain", "Accent", "Animated gradient", "Rainbow" }
 L.GRADS = { "Off", "Accent Flow", "Aurora", "Sunset", "Ocean", "Fire", "Rainbow", "Candy", "Mono" }
 F.sk = draw.CreateFont("Verdana", 12, 400, FONTFLAG_ANTIALIAS | FONTFLAG_DROPSHADOW)
@@ -3106,6 +3195,26 @@ function L.drawHud()
             end
         end
 
+    elseif st >= 8 then
+        local p = L.palFor(st, settings.flGrad)
+        local W, head = 204, L.PH[st] or 32
+        local H = head + max(1, #rows) * 25 + 10
+        local x, y = draggable("fl", sw - W - 14, 60, W, H)
+        L.panelBg(st, x, y, W, H, "lmaobox", settings.flBorder, settings.flGrad)
+        if #rows == 0 then L.pt(p.f, "nothing running", x + p.pad, y + head + 4, 25, p.dim) end
+        for i, r in ipairs(rows) do
+            local ry = y + head + 4 + (i - 1) * 25
+            local tt = anim("gh" .. r.name, r.on and 1 or 0, 12)
+            local col = rowCol(i, true) or p.c
+            if tt > 0.02 then disc(x + p.pad + 4, ry + 12, 6, col, 60 * tt) end
+            disc(x + p.pad + 4, ry + 12, 3.5, mix(p.dim, col, tt))
+            L.pt(p.f, r.name, x + p.pad + 17, ry, 25, mix(p.dim, p.txt, tt))
+            local tail = L.hudTail(r)
+            local tw = textW(F.tiny, tail) + 16
+            roundRect(x + W - p.pad - tw, ry + 4, tw, 17, 8, p.track, 210)
+            textC(F.tiny, tail, x + W - p.pad - tw / 2, ry + 4, 17, r.on and col or p.dim)
+        end
+
     elseif st == 7 then
         local bw = 200
         local bh = 44 + max(1, #rows) * 26 + 6
@@ -3176,7 +3285,7 @@ L.MCOFF, L.GSON, L.GSDIM, L.SLBG, L.SLSTAR = { 120, 124, 160 }, { 149, 204, 26 }
 ---------------------------------------------------------------------------
 -- 8k. Speed graph: how fast you move, with the peak
 ---------------------------------------------------------------------------
-L.SG_STYLES = { "Destiny", "Radiance", "Mercury", "Silentium" }
+L.SG_STYLES = { "Destiny", "Radiance", "Mercury", "Silentium", "Royal", "Liquid glass", "Moon", "OneShot" }
 L.speedHist, L.speedAt, L.speedPos = {}, 0, 0
 for i = 1, 120 do L.speedHist[i] = 0 end
 
@@ -3223,6 +3332,10 @@ function L.drawSpeedGraph()
             rect(x + 10, y, W - 20, 1, acc, 160)
         end
         col, bg, txt, dim = acc, L.IMSL_KEY, SL.text, SL.dim
+    elseif st >= 5 then
+        local p = L.palFor(st + 3, 1)
+        if panel then L.panelBg(st + 3, x, y, W, H, nil, 1, 1) end
+        col, bg, txt, dim = p.c, p.track, p.txt, p.dim
     else
         if panel then
             roundRect(x, y + 3, W, H, 12, C_BLACK, 70)
@@ -3429,7 +3542,14 @@ end
 
 -- the 7 HUD looks as a plain panel: colours and fonts first, then the box
 L.pal = { c = { 255, 255, 255 } }
-L.PH = { 32, 24, 27, 30, 32, 26, 38 }
+L.PH = { 32, 24, 27, 30, 32, 26, 38, 34, 34, 32, 34 }
+L.OS = { bg = { 30, 15, 40 }, line = { 104, 58, 120 }, sun = { 255, 205, 80 }, sunL = { 255, 240, 170 }, pink = { 214, 92, 150 },
+         txt = { 255, 241, 214 }, dim = { 206, 172, 204 }, track = { 60, 34, 78 } }
+L.MOON = { bg = { 16, 18, 34 }, line = { 58, 64, 110 }, lav = { 150, 140, 255 }, txt = { 234, 236, 252 }, dim = { 160, 166, 206 },
+           track = { 30, 34, 60 } }
+L.RY = { bg = { 16, 10, 26 }, line = { 120, 62, 152 }, pink = { 255, 92, 170 }, violet = { 150, 96, 255 }, txt = { 246, 236, 252 },
+         dim = { 172, 148, 198 }, track = { 42, 26, 60 }, title = { 255, 156, 208 } }
+L.GL = { txt = { 255, 255, 255 }, dim = { 226, 232, 244 }, track = { 20, 26, 38 } }
 function L.palFor(st, grad)
     local p = L.pal
     local gs = L.gradStops(grad)
@@ -3441,6 +3561,11 @@ function L.palFor(st, grad)
     elseif st == 5 then p.txt, p.dim, col, p.f, p.fb, p.track = MC.text, MC.dim, MC.val, F.small, F.rd, L.SGMC
     elseif st == 6 then p.txt, p.dim, col, p.f, p.fb, p.track, p.pad, p.shadow = L.GSTXT, L.GSDIM, L.GSON, F.gs, F.gs, C_BLACK, 4, true
     elseif st == 7 then p.txt, p.dim, col, p.f, p.fb, p.track = SL.text, SL.dim, accent(), F.small, F.bold, SL.line
+    elseif st == 8 then p.txt, p.dim, col, p.f, p.fb, p.track = L.RY.txt, L.RY.dim, L.RY.pink, F.small, F.bold, L.RY.track
+    elseif st == 9 then
+        p.txt, p.dim, col, p.f, p.fb, p.track, p.shadow = L.GL.txt, L.GL.dim, accent(), F.small, F.bold, L.GL.track, true
+    elseif st == 10 then p.txt, p.dim, col, p.f, p.fb, p.track = L.MOON.txt, L.MOON.dim, L.MOON.lav, F.small, F.bold, L.MOON.track
+    elseif st == 11 then p.txt, p.dim, col, p.f, p.fb, p.track = L.OS.txt, L.OS.dim, L.OS.sun, F.small, F.bold, L.OS.track
     else p.txt, p.dim, col, p.f, p.fb, p.track = T.text, T.muted, accent(), F.small, F.bold, T.pill end
     if gs then col = sampleStops(gs, now() * 0.12) end
     p.c[1], p.c[2], p.c[3] = col[1], col[2], col[3]
@@ -3465,7 +3590,210 @@ function L.skBox(x, y, w, h)
     rawColor(L.SKY[1], L.SKY[2], L.SKY[3], 255); draw.FilledRectFade(x + 3 + w1, y + 3, x + w - 3, y + 4, 0, 255, true)
 end
 
+-- Halloween decorations: webs, a jack-o'-lantern, bats, a spider on its thread, a ghost and the moon
+L.HW = { web = { 205, 190, 230 }, glow = { 255, 115, 20 }, rind = { 206, 78, 10 }, flesh = { 255, 124, 24 }, stem = { 96, 130, 44 },
+         face = { 255, 226, 120 }, bat = { 150, 105, 190 }, thread = { 210, 200, 230 }, spider = { 176, 150, 206 }, eye = { 255, 60, 60 },
+         ghost = { 240, 232, 255 }, dark = { 30, 16, 40 }, moon = { 250, 224, 160 }, moonG = { 255, 226, 150 }, crater = { 226, 196, 130 },
+         wing = { 118, 72, 190 }, body = { 150, 100, 225 } }
+L.fp = {}
+-- a shape as a fan of triangles from its first corner (n corners in L.fp)
+function L.fan(c, a, n)
+    local p = L.fp
+    for i = 2, n - 1 do cpoly(c, a, p[1], p[2], p[i * 2 - 1], p[i * 2], p[i * 2 + 1], p[i * 2 + 2]) end
+end
+-- a closed shape as a fan round a middle point
+function L.fanC(c, a, mx, my, n)
+    local p = L.fp
+    for i = 1, n do
+        local j = i % n + 1
+        cpoly(c, a, mx, my, p[i * 2 - 1], p[i * 2], p[j * 2 - 1], p[j * 2])
+    end
+end
+
+-- a spider web in a corner; dx, dy = +1 / -1 says which way it opens
+function L.hwWeb(x, y, dx, dy, r)
+    local c = L.HW.web
+    for i = 0, 5 do
+        local a = i * 0.314159
+        line(x, y, x + dx * cos(a) * r, y + dy * sin(a) * r, c, 48)
+    end
+    for ki = 1, 3 do
+        local k = (ki == 1) and 0.3 or ((ki == 2) and 0.55 or 0.8)
+        for i = 0, 4 do
+            local a1, a2 = i * 0.314159, (i + 1) * 0.314159
+            local x1, y1 = x + dx * cos(a1) * r * k, y + dy * sin(a1) * r * k
+            local x2, y2 = x + dx * cos(a2) * r * k, y + dy * sin(a2) * r * k
+            local mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+            mx, my = mx + (x - mx) * 0.14, my + (y - my) * 0.14
+            line(x1, y1, mx, my, c, 48)
+            line(mx, my, x2, y2, c, 48)
+        end
+    end
+end
+
+-- jack-o'-lantern with a flickering glow (fl = -1..1)
+function L.hwPumpkin(cx, cy, r, fl)
+    local H = L.HW
+    disc(cx, cy, r * 1.9, H.glow, 14 + 8 * fl)
+    disc(cx, cy, r * 1.35, H.glow, 24 + 10 * fl)
+    oval(cx - r * 0.52, cy, r * 0.62, r * 0.86, H.rind)
+    oval(cx + r * 0.52, cy, r * 0.62, r * 0.86, H.rind)
+    oval(cx, cy, r * 0.62, r * 0.92, H.flesh)
+    roundRect(cx - 3, cy - r * 1.14, 7, r * 0.36, 2, H.stem)
+    local g = 220 + 30 * fl
+    cpoly(H.face, g, cx - r * 0.52, cy - r * 0.05, cx - r * 0.16, cy - r * 0.05, cx - r * 0.34, cy - r * 0.42)
+    cpoly(H.face, g, cx + r * 0.16, cy - r * 0.05, cx + r * 0.52, cy - r * 0.05, cx + r * 0.34, cy - r * 0.42)
+    cpoly(H.face, g, cx - r * 0.07, cy + r * 0.1, cx + r * 0.07, cy + r * 0.1, cx, cy - r * 0.05)
+    local p = L.fp
+    p[1], p[2], p[3], p[4], p[5], p[6] = cx - r * 0.58, cy + r * 0.24, cx - r * 0.3, cy + r * 0.34, cx, cy + r * 0.28
+    p[7], p[8], p[9], p[10] = cx + r * 0.3, cy + r * 0.34, cx + r * 0.58, cy + r * 0.24
+    p[11], p[12], p[13], p[14], p[15], p[16] = cx + r * 0.4, cy + r * 0.52, cx + r * 0.2, cy + r * 0.4, cx, cy + r * 0.62
+    p[17], p[18], p[19], p[20] = cx - r * 0.2, cy + r * 0.4, cx - r * 0.4, cy + r * 0.52
+    L.fanC(H.face, g, cx, cy + r * 0.37, 10)
+end
+
+function L.hwBat(x, y, s, ph)
+    local c = L.HW.bat
+    local fl = sin(ph) * 0.55
+    oval(x, y, s * 0.22, s * 0.34, c, 185)
+    disc(x - s * 0.1, y - s * 0.36, max(1, s * 0.1), c, 185)
+    disc(x + s * 0.1, y - s * 0.36, max(1, s * 0.1), c, 185)
+    local p = L.fp
+    for sd = -1, 1, 2 do
+        p[1], p[2] = x + sd * s * 0.15, y - s * 0.05
+        p[3], p[4] = x + sd * s * 0.9, y - s * (0.55 + fl)
+        p[5], p[6] = x + sd * s * 1.5, y - s * (0.1 + fl * 0.6)
+        p[7], p[8] = x + sd * s * 1.25, y + s * 0.3
+        p[9], p[10] = x + sd * s * 0.9, y + s * 0.08
+        p[11], p[12] = x + sd * s * 0.55, y + s * 0.36
+        p[13], p[14] = x + sd * s * 0.3, y + s * 0.12
+        L.fan(c, 185, 7)
+    end
+end
+
+-- a spider hanging on its thread from top down to len
+function L.hwSpider(x, top, len)
+    local H = L.HW
+    line(x, top, x, top + len, H.thread, 80)
+    local by = top + len + 8
+    for k = 1, 4 do
+        line(x, by, x - 8 - k * 3, by - 7 + k * 4, H.spider)
+        line(x, by, x + 8 + k * 3, by - 7 + k * 4, H.spider)
+    end
+    disc(x, by, 6, H.spider)
+    disc(x, by - 7, 3.6, H.spider)
+    disc(x - 1.6, by - 8, 1.1, H.eye)
+    disc(x + 1.6, by - 8, 1.1, H.eye)
+end
+
+function L.hwGhost(x, y)
+    local H = L.HW
+    roundRect(x, y, 28, 30, 13, H.ghost, 215)
+    for i = 0, 2 do disc(x + 4.7 + i * 9.3, y + 30, 4.7, H.ghost, 215) end
+    disc(x + 9, y + 13, 2.6, H.dark)
+    disc(x + 19, y + 13, 2.6, H.dark)
+    disc(x + 14, y + 21, 2.2, H.dark)
+end
+
+-- the little scene in the menu header: spider, three bats, the moon, a ghost and a pumpkin
+function L.hwScene(x0, x1, top, bot, fl)
+    local t = now()
+    local H = L.HW
+    L.screenSpace()
+    L.hwSpider((x0 + x1) / 2 + 40, top, 4 + 6 * sin(t * 1.3) + 8)
+    local span = max(40, x1 - x0 - 190)
+    for k = 1, 3 do
+        local bx = x0 + (t * (30 + k * 8) + k * 150) % span + 10
+        L.hwBat(bx, top + 12 + k * 8 + 6 * sin(t * 1.6 + k * 2), 6 + k * 0.6, t * 13 + k * 2)
+    end
+    disc(x1 - 150, bot - 24, 15, H.moonG, 18)
+    disc(x1 - 150, bot - 24, 10, H.moon, 235)
+    disc(x1 - 153, bot - 27, 2.4, H.crater, 150)
+    L.hwGhost(x1 - 112, bot - 42 + 3 * sin(t * 2))
+    L.hwPumpkin(x1 - 40, bot - 22, 14, fl)
+end
+
+-- bats flying across the whole screen behind the menu
+function L.drawBats()
+    local sw, sh = draw.GetScreenSize()
+    local H = L.HW
+    local n = max(2, round((20 + settings.bgFxAmt * 1.5) / 9))
+    local t = now()
+    local p = L.fp
+    L.screenSpace()
+    for i = 1, n do
+        local k, a = L.rnd(11, i) * 10, L.rnd(11, i + 50)
+        local dir = (i % 2 == 0) and 1 or -1
+        local sp = 70 + 90 * a
+        local x = (L.rnd(11, i + 100) * sw + dir * sp * t) % (sw + 240) - 120
+        local y = L.rnd(11, i + 150) * sh * 0.8 + 45 * sin(t / 0.9 + k * 9) + 30 * sin(t / 0.33 + k * 4)
+        local s = 15 + 17 * a
+        local up = s * (0.2 + 0.55 * (0.5 + 0.5 * sin(t / 0.085 + k * 12)))
+        for sd = -1, 1, 2 do
+            local d = dir * sd
+            p[1], p[2] = x, y - s * 0.05
+            p[3], p[4] = x + d * s * 0.45, y - up
+            p[5], p[6] = x + d * s * 0.85, y - up * 0.55 + s * 0.1
+            p[7], p[8] = x + d * s * 1.1, y + s * 0.2
+            p[9], p[10] = x + d * s * 0.75, y + s * 0.08
+            p[11], p[12] = x + d * s * 0.55, y + s * 0.3
+            p[13], p[14] = x + d * s * 0.28, y + s * 0.1
+            L.fan(H.wing, 224, 7)
+        end
+        disc(x, y + s * 0.05, s * 0.42, H.body, 240)
+        disc(x - s * 0.1, y - s * 0.14, max(1, s * 0.12), H.face, 255)
+        disc(x + s * 0.1, y - s * 0.14, max(1, s * 0.12), H.face, 255)
+    end
+end
+
+L.NK = { hat = { 150, 50, 80 }, hatD = { 112, 34, 60 }, ear = { 226, 130, 150 }, hair = { 66, 58, 168 }, hairL = { 96, 88, 204 },
+         skin = { 206, 138, 100 }, eye = { 255, 214, 60 }, eyeL = { 255, 244, 170 }, pupil = { 46, 26, 22 }, scarf = { 70, 104, 214 } }
+function L.drawNiko(cx, cy, u, a)
+    a = a or 255
+    local N = L.NK
+    L.screenSpace()
+    local t = now()
+    local blink = (t % 4.2) > 4.05
+    cy = cy + sin(t * 1.6) * u * 0.02
+    -- hair behind the head, with a spike on each side
+    for sd = -1, 1, 2 do
+        cpoly(N.hair, a, cx + sd * 0.38 * u, cy - 0.05 * u, cx + sd * 0.86 * u, cy + 0.2 * u, cx + sd * 0.4 * u, cy + 0.3 * u)
+        cpoly(N.hair, a, cx + sd * 0.36 * u, cy + 0.18 * u, cx + sd * 0.74 * u, cy + 0.46 * u, cx + sd * 0.3 * u, cy + 0.46 * u)
+    end
+    oval(cx, cy + 0.06 * u, 0.5 * u, 0.46 * u, N.hair, a)
+    -- scarf and face
+    oval(cx, cy + 0.5 * u, 0.4 * u, 0.13 * u, N.scarf, a)
+    oval(cx, cy + 0.14 * u, 0.42 * u, 0.35 * u, N.skin, a)
+    -- fringe
+    cpoly(N.hair, a, cx - 0.44 * u, cy - 0.2 * u, cx + 0.44 * u, cy - 0.2 * u, cx + 0.4 * u, cy - 0.02 * u, cx - 0.4 * u, cy - 0.02 * u)
+    cpoly(N.hair, a, cx - 0.42 * u, cy - 0.04 * u, cx - 0.14 * u, cy - 0.04 * u, cx - 0.3 * u, cy + 0.12 * u)
+    cpoly(N.hair, a, cx - 0.14 * u, cy - 0.04 * u, cx + 0.14 * u, cy - 0.04 * u, cx, cy + 0.1 * u)
+    cpoly(N.hair, a, cx + 0.14 * u, cy - 0.04 * u, cx + 0.42 * u, cy - 0.04 * u, cx + 0.3 * u, cy + 0.12 * u)
+    -- eyes: big and yellow, a thin line when she blinks
+    for sd = -1, 1, 2 do
+        local ex, ey = cx + sd * 0.19 * u, cy + 0.2 * u
+        if blink then
+            rect(ex - 0.1 * u, ey, 0.2 * u, max(1, 0.03 * u), N.pupil, a)
+        else
+            oval(ex, ey, 0.115 * u, 0.13 * u, N.eye, a)
+            oval(ex, ey, 0.028 * u, 0.1 * u, N.pupil, a)
+            oval(ex - 0.045 * u, ey - 0.055 * u, 0.03 * u, 0.03 * u, N.eyeL, a)
+        end
+    end
+    rect(cx - 0.035 * u, cy + 0.37 * u, 0.07 * u, max(1, 0.025 * u), N.pupil, a * 0.8)
+    -- hat: ears first, then the crown and the wide brim
+    for sd = -1, 1, 2 do
+        cpoly(N.hat, a, cx + sd * 0.14 * u, cy - 0.58 * u, cx + sd * 0.44 * u, cy - 0.96 * u, cx + sd * 0.5 * u, cy - 0.5 * u)
+        cpoly(N.ear, a, cx + sd * 0.25 * u, cy - 0.6 * u, cx + sd * 0.41 * u, cy - 0.84 * u, cx + sd * 0.44 * u, cy - 0.56 * u)
+    end
+    oval(cx, cy - 0.44 * u, 0.42 * u, 0.3 * u, N.hat, a)
+    oval(cx, cy - 0.21 * u, 0.74 * u, 0.15 * u, N.hatD, a)
+    oval(cx, cy - 0.25 * u, 0.72 * u, 0.13 * u, N.hat, a)
+end
+
 function L.panelBg(st, x, y, w, h, title, bord, grad)
+    -- OneShot: Niko peeks over the top right corner of the bigger panels
+    if st == 11 and h >= 40 then L.drawNiko(x + w - 26, y - 1, 26, 255) end
     local p = L.pal
     if st == 2 then
         L.skBox(x, y, w, h)
@@ -3506,6 +3834,57 @@ function L.panelBg(st, x, y, w, h, title, bord, grad)
         rect(x + 10, y, w - 20, 1, p.c, 160)
         L.styledBorder(bord, grad, x, y, w, h, 10)
         if title then text(F.script, title, x + 14, y + 5, 30, mix(p.c, C_WHITE, 0.2)) end
+    elseif st == 8 then
+        -- Royal: near-black purple, a pink to violet line on top, a faint pink glow around it
+        roundRectLine(x - 2, y - 2, w + 4, h + 4, 14, L.RY.pink, 26)
+        roundRectLine(x - 1, y - 1, w + 2, h + 2, 13, L.RY.pink, 50)
+        roundRect(x, y + 3, w, h, 12, C_BLACK, 70)
+        roundRect(x, y, w, h, 12, L.RY.bg, 238)
+        if bord <= 1 then roundRectLine(x, y, w, h, 12, L.RY.line, 170) else L.styledBorder(bord, grad, x, y, w, h, 12) end
+        local x0, x1 = round(x + 12), round(x + w - 12)
+        color(L.RY.violet, 255); draw.FilledRect(x0, round(y), x1, round(y) + 2)
+        rawColor(L.RY.pink[1], L.RY.pink[2], L.RY.pink[3], 255)
+        draw.FilledRectFade(x0, round(y), x1, round(y) + 2, clamp(round(255 * ALPHA), 0, 255), 0, true)
+        if title then
+            text(F.icon, "✦", x + 12, y + 5, 24, p.c)
+            text(F.bold, title, x + 32, y + 5, 24, L.RY.title)
+        end
+    elseif st == 9 then
+        -- Liquid glass: a light see-through pane with a bright rim and a soft highlight in its upper half
+        -- mostly clear: a faint tint, a brighter upper half, a white rim and a soft shadow
+        roundRect(x, y + 4, w, h, 18, C_BLACK, 26)
+        roundRect(x, y, w, h, 18, C_WHITE, 30)
+        roundRect(x + 2, y + 2, w - 4, max(8, (h - 4) * 0.45), 16, C_WHITE, 22)
+        roundRectLine(x, y, w, h, 18, C_WHITE, 170)
+        roundRectLine(x + 1, y + 1, w - 2, h - 2, 17, C_WHITE, 45)
+        L.styledBorder(bord, grad, x, y, w, h, 18)
+        if title then L.pt(F.bold, title, x + 16, y + 6, 24, L.GL.txt) end
+    elseif st == 11 then
+        -- OneShot: a deep plum panel with a warm sun glow, a pink to gold line on top and a little sun in the title
+        local pulse = 0.75 + 0.25 * sin(now() * 2.2)
+        roundRectLine(x - 3, y - 3, w + 6, h + 6, 15, L.OS.sun, 16 * pulse)
+        roundRectLine(x - 1.5, y - 1.5, w + 3, h + 3, 13.5, L.OS.sun, 40 * pulse)
+        roundRect(x, y + 3, w, h, 12, C_BLACK, 70)
+        roundRect(x, y, w, h, 12, L.OS.bg, 236)
+        if bord <= 1 then roundRectLine(x, y, w, h, 12, L.OS.line, 190) else L.styledBorder(bord, grad, x, y, w, h, 12) end
+        local x0, x1 = round(x + 12), round(x + w - 12)
+        color(L.OS.sun, 255); draw.FilledRect(x0, round(y), x1, round(y) + 2)
+        rawColor(L.OS.pink[1], L.OS.pink[2], L.OS.pink[3], 255)
+        draw.FilledRectFade(x0, round(y), x1, round(y) + 2, clamp(round(255 * ALPHA), 0, 255), 0, true)
+        if title then
+            disc(x + 20, y + 16, 9, L.OS.sun, 50 * pulse)
+            disc(x + 20, y + 16, 5, L.OS.sunL, 255)
+            text(F.bold, title, x + 34, y + 4, 24, L.OS.txt)
+        end
+    elseif st == 10 then
+        -- Moon: dark navy pills with a lavender moon
+        roundRect(x, y + 3, w, h, 9, C_BLACK, 70)
+        roundRect(x, y, w, h, 9, L.MOON.bg, 228)
+        if bord <= 1 then roundRectLine(x, y, w, h, 9, L.MOON.line, 200) else L.styledBorder(bord, grad, x, y, w, h, 9) end
+        if title then
+            text(F.icon, "☾", x + 11, y + 4, 24, p.c)
+            text(F.bold, title, x + 31, y + 4, 24, L.MOON.txt)
+        end
     else
         roundRect(x - 2, y + 2, w + 4, h, 16, C_BLACK, 45)
         roundRect(x, y, w, h, 14, T.card, 240)
@@ -3569,6 +3948,7 @@ function L.trackKill(victim, weapon, how, flags)
     local t = now()
     L.ksAt, L.chKillAt, L.lastAction, L.ssAt = t, t, t, nil
     if L.KS_BANNERS[me.streak] then L.ksBannerAt, L.ksBannerS = t, L.KS_BANNERS[me.streak] end
+    if L.STREAK_STEPS[me.streak] and settings.ksSound > 1 then playFrom(L.STREAK_SOUNDS, settings.ksSound) end
     L.feedAdd(1, "You", (weapon or "killed") .. (how and ("  •  " .. how) or ""), victim)
     if flags & 1 ~= 0 then
         if settings.ntDom then notify("♛", "You are dominating " .. victim, "They haven't killed you in 4 of your kills", GOLD) end
@@ -4135,11 +4515,1231 @@ function L.drawCrosshair()
 end
 
 ---------------------------------------------------------------------------
+-- 8p. Hit particles: a burst at the spot where the player I hit was standing
+---------------------------------------------------------------------------
+L.PT_STYLES = { "Explosion", "Sparks", "Embers", "Blood", "Stars", "Confetti", "Flakes", "Lightning", "Hit spark", "Neon" }
+L.PT_COLORS = { "The style's own colours", "My hit and kill colours" }
+L.PT_LEN = { 1.1, 0.95, 1.5, 0.75, 1.15, 1.6, 1.6, 0.9, 0.6, 1.4 }
+L.PTC = { hot = { 255, 190, 90 }, fire = { 255, 130, 36 }, smoke = { 58, 50, 52 }, spark = { 255, 236, 170 },
+          ember = { 255, 150, 50 }, emberIn = { 110, 26, 8 }, emberGlow = { 255, 84, 18 }, blood = { 205, 12, 24 },
+          bloodD = { 104, 0, 10 }, cyan = { 40, 235, 255 }, cyanL = { 190, 252, 255 }, neonG = { 70, 255, 120 },
+          neonP = { 190, 80, 255 }, neonPL = { 236, 170, 255 } }
+L.pt3 = { list = {}, at = 0 }
+for i = 1, 8 do L.pt3.list[i] = { t0 = -99, x = 0, y = 0, z = 0, kill = false, seed = 0, style = 1 } end
+
+function L.ptAt(x, y, z, kill)
+    local P = L.pt3
+    P.at = P.at % 8 + 1
+    local b = P.list[P.at]
+    b.t0, b.x, b.y, b.z, b.kill, b.seed = now(), x, y, z, kill, math.random() * 1000
+    b.style = kill and settings.ptKillStyle or settings.ptStyle
+end
+
+function L.ptSpawn(ent, kill)
+    if not settings.ptOn or not ent then return end
+    if kill and not settings.ptKill then return end
+    if not kill and not settings.ptHit then return end
+    local ok, pos = pcall(L.originOf, ent)
+    if ok and pos then
+        L.ptAt(pos.x, pos.y, pos.z + 48, kill)
+        L.pt3.made = (L.pt3.made or 0) + 1
+    else
+        L.pt3.err = "couldn't find where the player stands"
+    end
+end
+
+-- the menu's test button: a burst a few steps in front of me
+function L.ptTest(kill)
+    local lp = entities.GetLocalPlayer()
+    if not lp then notify("✸", "Hit particles", "Join a map to see them", accent()); return end
+    local ok, pos = pcall(L.originOf, lp)
+    local okA, ang = pcall(engine.GetViewAngles)
+    if not ok or not pos then return end
+    local yaw = (okA and ang and ang.y or 0) * pi / 180
+    L.ptAt(pos.x + cos(yaw) * 170, pos.y + sin(yaw) * 170, pos.z + 52, kill)
+end
+
+function L.w2s(v)
+    local a, b = client.WorldToScreen(v)
+    if type(a) == "table" then return a[1], a[2] end
+    if a then return a, b end
+end
+
+-- where particle i of a burst is after t seconds: thrown out at an angle, slowed by the air, pulled down.
+-- right and up, in world units
+function L.ptPos(seed, i, t, speed, drag, grav)
+    local ang = L.rnd(seed, i) * 6.2832
+    local sp = speed * (0.35 + 0.65 * L.rnd(seed, i + 100))
+    local d = (1 - math.exp(-drag * t)) / drag
+    return cos(ang) * sp * d, sin(ang) * sp * d - 0.5 * grav * t * t
+end
+
+function L.ptBurst(b, el, ox, oy, k)
+    local style, seed, kill = b.style, b.seed, b.kill
+    local len = L.PT_LEN[style] or 1
+    local e = el / len
+    local amt = settings.ptAmt / 100 * (kill and 1.5 or 1)
+    local tint = settings.ptCol == 2 and (L.hex(kill and settings.colKill or settings.colHit) or accent()) or nil
+    local C = L.PTC
+
+    if style == 1 then
+        if el < 0.2 then
+            local f = el / 0.2
+            disc(ox, oy, 95 * k * easeOut(f), tint or C.hot, 130 * (1 - f))
+            disc(ox, oy, (22 + 46 * easeOut(f)) * k, C_WHITE, 235 * (1 - f))
+        end
+        disc(ox, oy, (46 + 44 * e) * k, tint or C.fire, 95 * (1 - e) * (1 - e))
+        for i = 1, min(26, floor(11 * amt)) do
+            local u, v = L.ptPos(seed, i, el, 78, 2.2, -34)
+            local r = (12 + 28 * e) * k * (0.6 + 0.8 * L.rnd(seed, i + 300))
+            disc(ox + u * k, oy - v * k, r, mix(tint or C.fire, C.smoke, min(1, e * 1.7)), 150 * (1 - e))
+        end
+        if el < 0.45 then
+            for i = 1, min(18, floor(9 * amt)) do
+                local u1, v1 = L.ptPos(seed, 400 + i, el, 460, 5, 0)
+                local u0, v0 = L.ptPos(seed, 400 + i, max(0, el - 0.06), 460, 5, 0)
+                line(ox + u0 * k, oy - v0 * k, ox + u1 * k, oy - v1 * k, tint or C.hot, 255 * (1 - el / 0.45))
+            end
+        end
+
+    elseif style == 2 then
+        if el < 0.1 then disc(ox, oy, (10 + 26 * el / 0.1) * k, C_WHITE, 220 * (1 - el / 0.1)) end
+        for i = 1, min(80, floor(44 * amt)) do
+            local life = 0.4 + 0.5 * L.rnd(seed, i + 200)
+            if el < life then
+                local u1, v1 = L.ptPos(seed, i, el, 340, 3.2, 430)
+                local u0, v0 = L.ptPos(seed, i, max(0, el - 0.045), 340, 3.2, 430)
+                local a = 255 * (1 - el / life)
+                local x1, y1 = ox + u1 * k, oy - v1 * k
+                line(ox + u0 * k, oy - v0 * k, x1, y1, (i % 3 == 0) and C_WHITE or (tint or C.spark), a)
+                if i % 4 == 0 then disc(x1, y1, max(1.5, 2.2 * k), C_WHITE, a) end
+            end
+        end
+
+    elseif style == 3 then
+        for i = 1, min(60, floor(30 * amt)) do
+            local life = 0.8 + 0.6 * L.rnd(seed, i + 200)
+            if el < life then
+                local u, v = L.ptPos(seed, i, el, 150, 2.6, -40)
+                local x, y = ox + u * k, oy - v * k
+                local fade = 1 - el / life
+                local fl = 0.6 + 0.4 * sin(el * 14 + i)
+                local sz = max(2.5, (3 + 5 * L.rnd(seed, i + 300)) * k)
+                disc(x, y, sz * 2.4, tint or C.emberGlow, 60 * fl * fade)
+                local a0 = L.rnd(seed, i + 500) * 6.28 + el * (1.5 + 3 * L.rnd(seed, i + 600))
+                local x1, y1 = x + cos(a0) * sz, y + sin(a0) * sz
+                local x2, y2 = x + cos(a0 + 2.2) * sz * 0.9, y + sin(a0 + 2.2) * sz * 0.9
+                local x3, y3 = x + cos(a0 + 4.1) * sz * 0.8, y + sin(a0 + 4.1) * sz * 0.8
+                cpoly(tint or C.ember, 240 * fade, x1, y1, x2, y2, x3, y3)
+                cpoly(C.emberIn, 220 * fade, x + (x1 - x) * 0.5, y + (y1 - y) * 0.5, x + (x2 - x) * 0.5, y + (y2 - y) * 0.5,
+                      x + (x3 - x) * 0.5, y + (y3 - y) * 0.5)
+            end
+        end
+
+    elseif style == 4 then
+        disc(ox, oy, (18 + 42 * e) * k, tint or C.bloodD, 120 * (1 - e))
+        for i = 1, min(60, floor(28 * amt)) do
+            local u, v = L.ptPos(seed, i, el, 230, 2.5, 520)
+            local r = max(1.5, (1.6 + 3 * L.rnd(seed, i + 300)) * k)
+            disc(ox + u * k, oy - v * k, r, mix(tint or C.blood, C.bloodD, L.rnd(seed, i + 400)), 235 * (1 - e))
+        end
+
+    elseif style == 5 then
+        for i = 1, min(36, floor(14 * amt)) do
+            local u, v = L.ptPos(seed, i, el, 175, 2.4, 60)
+            local x, y = ox + u * k, oy - v * k
+            local tw = 0.45 + 0.55 * abs(sin(el * 9 + i * 2))
+            local r = max(3, (5 + 6 * L.rnd(seed, i + 300)) * k) * tw
+            local c = mix(tint or GOLD, C_WHITE, L.rnd(seed, i + 400))
+            local a = 255 * (1 - e)
+            disc(x, y, r * 1.6, c, 40 * (1 - e))
+            line(x - r, y, x + r, y, c, a)
+            line(x, y - r, x, y + r, c, a)
+            line(x - r * 0.45, y - r * 0.45, x + r * 0.45, y + r * 0.45, c, a * 0.7)
+            line(x - r * 0.45, y + r * 0.45, x + r * 0.45, y - r * 0.45, c, a * 0.7)
+            disc(x, y, max(1.5, r * 0.3), C_WHITE, a)
+        end
+
+    elseif style == 7 then
+        -- flakes: glowing chips swirling up in a column over the body
+        local col = tint or C.cyan
+        for i = 1, min(90, floor(46 * amt)) do
+            local life = 0.9 + 0.7 * L.rnd(seed, i + 200)
+            local tt = el - L.rnd(seed, i + 700) * 0.35
+            if tt > 0 and tt < life then
+                local f = tt / life
+                local ang = L.rnd(seed, i) * 6.28 + tt * (2.5 + 2 * L.rnd(seed, i + 50))
+                local rad = (5 + 13 * L.rnd(seed, i + 100)) * (1 - 0.4 * f)
+                local x = ox + cos(ang) * rad * k
+                local y = oy + (22 - L.rnd(seed, i + 150) * 30 - tt * (48 + 40 * L.rnd(seed, i + 400))) * k
+                local sz = max(2, (2.4 + 3 * L.rnd(seed, i + 300)) * k)
+                local a = 255 * (1 - f) * min(1, tt / 0.08)
+                disc(x, y, sz * 2.6, col, 34 * (1 - f))
+                local sp = tt * 9 + i
+                cpoly(mix(col, C.cyanL, L.rnd(seed, i + 500)), a, x + cos(sp) * sz, y + sin(sp) * sz * 0.6,
+                      x + cos(sp + 2.4) * sz * 0.8, y + sin(sp + 2.4) * sz, x + cos(sp + 4.2) * sz * 0.7, y + sin(sp + 4.2) * sz * 0.5)
+            end
+        end
+
+    elseif style == 8 then
+        -- lightning: a bright beam from the sky onto the spot with bolts crackling round it
+        local col = tint or C.cyan
+        local fade = (el < 0.08) and (el / 0.08) or (1 - e) ^ 1.3
+        local top = -40
+        local w = max(3, 7 * k) * (0.7 + 0.3 * fade)
+        local flick = 0.75 + 0.25 * sin(el * 60)
+        rect(ox - w * 3.5, top, w * 7, oy - top, col, 34 * fade * flick)
+        rect(ox - w * 1.6, top, w * 3.2, oy - top, col, 90 * fade * flick)
+        rect(ox - w * 0.5, top, w, oy - top, C_WHITE, 235 * fade)
+        disc(ox, oy, (16 + 24 * e) * k, col, 120 * fade)
+        disc(ox, oy, 8 * k, C_WHITE, 220 * fade)
+        L.screenSpace()
+        local frame = floor(el * 24)
+        for b = 1, 4 do
+            local px, py = ox, oy - L.rnd(seed + frame, b) * 70 * k
+            local dir = (b % 2 == 0) and 1 or -1
+            for st = 1, 6 do
+                local nx = px + dir * (6 + 10 * L.rnd(seed + frame, b * 10 + st)) * k
+                local ny = py + (L.rnd(seed + frame, b * 20 + st) - 0.5) * 22 * k
+                tline(px, py, nx, ny, max(2, 3 * k), col, 120 * fade)
+                line(px, py, nx, ny, C_WHITE, 230 * fade)
+                px, py = nx, ny
+            end
+        end
+        for i = 1, min(30, floor(14 * amt)) do
+            local u, v = L.ptPos(seed, i, el, 260, 3, 300)
+            disc(ox + u * k, oy - v * k, max(1.5, 2 * k), mix(col, C_WHITE, 0.5), 230 * (1 - e))
+        end
+
+    elseif style == 9 then
+        -- hit spark: thin white streaks thrown wide, a short flash
+        if el < 0.07 then disc(ox, oy, (8 + 30 * el / 0.07) * k, C_WHITE, 200 * (1 - el / 0.07)) end
+        for i = 1, min(60, floor(28 * amt)) do
+            local life = 0.25 + 0.35 * L.rnd(seed, i + 200)
+            if el < life then
+                local u1, v1 = L.ptPos(seed, i, el, 620, 4.5, 160)
+                local u0, v0 = L.ptPos(seed, i, max(0, el - 0.03), 620, 4.5, 160)
+                local a = 255 * (1 - el / life)
+                local x0, y0, x1, y1 = ox + u0 * k, oy - v0 * k, ox + u1 * k, oy - v1 * k
+                local c = tint and mix(tint, C_WHITE, 0.6) or C_WHITE
+                tline(x0, y0, x1, y1, max(1.5, 2.2 * k), c, a * 0.5)
+                line(x0, y0, x1, y1, C_WHITE, a)
+            end
+        end
+
+    elseif style == 10 then
+        -- neon: spinning triangle outlines, glowing orbs, a green bolt and a purple haze
+        local fade = (1 - e) ^ 1.2
+        L.screenSpace()
+        for i = 1, min(12, floor(6 * amt)) do
+            local u, v = L.ptPos(seed, i, el, 150, 2.2, -10)
+            local x, y = ox + u * k, oy - v * k
+            local r = (7 + 7 * L.rnd(seed, i + 300)) * k
+            local rot = L.rnd(seed, i + 400) * 6.28 + el * (2 + 3 * L.rnd(seed, i + 500))
+            local c = tint or C.cyan
+            for ln = 0, 2 do
+                local a1, a2 = rot + ln * 2.094, rot + (ln + 1) * 2.094
+                tline(x + cos(a1) * r, y + sin(a1) * r, x + cos(a2) * r, y + sin(a2) * r, max(2, 2.6 * k), c, 90 * fade)
+                line(x + cos(a1) * r, y + sin(a1) * r, x + cos(a2) * r, y + sin(a2) * r, C.cyanL, 240 * fade)
+            end
+        end
+        for i = 1, min(20, floor(10 * amt)) do
+            local u, v = L.ptPos(seed, 50 + i, el, 120, 2, -20)
+            local x, y = ox + u * k, oy - v * k
+            local r = max(2, (2 + 3 * L.rnd(seed, i + 600)) * k)
+            disc(x, y, r * 2.5, C.neonP, 60 * fade)
+            disc(x, y, r, C.neonPL, 230 * fade)
+        end
+        if el < 0.5 then
+            local bf = 1 - el / 0.5
+            local frame = floor(el * 20)
+            local px, py = ox - 50 * k, oy - 60 * k
+            for st = 1, 8 do
+                local nx = px + (12 + 4 * L.rnd(seed + frame, st)) * k
+                local ny = py + (8 + 14 * (L.rnd(seed + frame, st + 9) - 0.3)) * k
+                tline(px, py, nx, ny, max(2, 3.5 * k), C.neonG, 110 * bf)
+                line(px, py, nx, ny, C_WHITE, 230 * bf)
+                px, py = nx, ny
+            end
+        end
+
+    else
+        for i = 1, min(80, floor(36 * amt)) do
+            local u, v = L.ptPos(seed, i, el, 250, 2.8, 250)
+            local w = max(1, 5.5 * k * abs(sin(el * 9 + i)))
+            local h = max(2, 3.6 * k)
+            rect(ox + u * k - w / 2, oy - v * k - h / 2, w, h, tint and mix(tint, C_WHITE, L.rnd(seed, i + 300))
+                 or sampleStops(logoStops(6), L.rnd(seed, i + 300)), 245 * (1 - e * e))
+        end
+    end
+end
+
+function L.drawParticles()
+    local P = L.pt3
+    local t = now()
+    local v = P.vec
+    for i = 1, 8 do
+        local b = P.list[i]
+        local el = t - b.t0
+        if el >= 0 and el < (L.PT_LEN[b.style] or 1) then
+            if not v then v = Vector3(0, 0, 0); P.vec = v; L.screenSpace() end
+            v.x, v.y, v.z = b.x, b.y, b.z
+            local sx, sy = L.w2s(v)
+            v.z = b.z + 20
+            local _, sy2 = L.w2s(v)
+            if sx and sy2 then
+                -- how many pixels one world unit is at that distance
+                local ppu = abs(sy - sy2) / 20
+                if ppu > 0.03 then
+                    L.screenSpace()
+                    -- one broken burst must not stop the others
+                    local ok, err = pcall(L.ptBurst, b, el, sx, sy, min(6, ppu) * settings.ptSize / 100)
+                    ALPHA = 1
+                    if ok then P.drawn = (P.drawn or 0) + 1
+                    elseif not tostring(err):find("Color not set", 1, true) then
+                        P.err = (L.PT_STYLES[b.style] or "?") .. ": " .. tostring(err):gsub("^.-destiny%.lua:", "line ")
+                    else L.ccOk = false end
+                end
+            end
+        end
+    end
+end
+
+---------------------------------------------------------------------------
+-- 8q. Pets: an animated sprite that walks along with me (only I see it). Each animation is one picture with
+-- 8 rows (the pet seen from 8 sides, row 1 from the front, then turning round it) and 8 frames per row.
+---------------------------------------------------------------------------
+L.PETS = {
+    { "Klee", "klee", height = 34, len = { idle = 2, walk = 0.8, run = 0.55, crouch = 1.35, jump = 0.8 } },
+    { "Mechanical Cat", "mechanical_cat", height = 32, tall = 0.7185, len = { idle = 2, walk = 0.8, run = 0.55, crouch = 1.35, jump = 0.8 } },
+    { "Chiikawa", "chiikawa", height = 26, tall = 0.7185, len = { idle = 2, walk = 0.8, run = 0.55, crouch = 1.35, jump = 0.8 } },
+    { "Kafka", "kafka", height = 42, tall = 0.7185, len = { idle = 2.4, walk = 0.9, run = 0.6, crouch = 2, jump = 0.8 } },
+    { "Elfaria", "elfaria", height = 40, tall = 0.7185, len = { idle = 2.4, walk = 0.9, run = 0.6, crouch = 2, jump = 0.8 } },
+    { "Lady Avalon", "lady_avalon", height = 40, tall = 0.7185, len = { idle = 2.4, walk = 0.9, run = 0.6, crouch = 2, jump = 0.8 } },
+    { "2B", "2b", height = 40, tall = 0.7185, len = { idle = 2.4, walk = 0.9, run = 0.6, crouch = 2, jump = 0.8 } },
+    { "Raiden Shogun", "raiden", height = 42, tall = 0.7185, len = { idle = 2.4, walk = 0.9, run = 0.6, crouch = 2, jump = 0.8 } },
+    { "Niko", "niko", height = 30, tall = 0.7185, len = { idle = 2.4, walk = 0.9, run = 0.6, crouch = 2, jump = 0.8 } },
+    { "Spice", "spice", height = 40, tall = 0.7185, len = { idle = 2.4, walk = 0.9, run = 0.6, crouch = 2, jump = 0.8 } },
+}
+L.PET_ANIMS = { "idle", "walk", "run", "crouch", "jump" }
+L.PET_SIDES = { "Left", "Right", "Roams around me" }
+-- in each 256 px cell the feet are at 228 and the top of the head at 22
+L.PET_FEET, L.PET_TALL = 228 / 256, 206 / 256
+L.pet = { tex = {}, texFor = nil, x = 0, y = 0, z = 0, gz = 0, yaw = 0, tyaw = 0, anim = "idle", t0 = 0, traceAt = 0,
+          seen = 1, placed = false, q = { { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 } } }
+
+function L.pet.free()
+    local Q = L.pet
+    for _, id in pairs(Q.tex) do if id then pcall(draw.DeleteTexture, id) end end
+    Q.tex, Q.texFor, Q.err = {}, nil, nil
+end
+
+-- the names in the pet dropdown, rebuilt when a downloaded pet joins
+function L.petNameList()
+    if not L.petNames then
+        L.petNames = {}
+        for i, p in ipairs(L.PETS) do L.petNames[i] = p[1] end
+    end
+    return L.petNames
+end
+L.pet.remove = L.pet.free
+
+-- the pictures, loaded the first time they are needed
+function L.pet.sheet(def, anim)
+    local Q = L.pet
+    if Q.texFor ~= def[2] then Q.free(); Q.texFor = def[2] end
+    local id = Q.tex[anim]
+    if id ~= nil then return id or nil end
+    if not Q.dir then
+        local ok, gd = pcall(engine.GetGameDir)
+        Q.dir = ((ok and gd) and tostring(gd) or ""):gsub("[\\/]tf[\\/]?$", "") .. "\\destiny_files\\pets\\"
+    end
+    local okT, tid = pcall(draw.CreateTexture, Q.dir .. def[2] .. "\\" .. anim .. ".png")
+    L.recolor()
+    Q.tex[anim] = (okT and tid) or false
+    if not (okT and tid) then Q.err = "missing picture destiny_files/pets/" .. def[2] .. "/" .. anim .. ".png" end
+    return Q.tex[anim] or nil
+end
+
+function L.pet.update()
+    local Q = L.pet
+    local lp = settings.petOn and entities.GetLocalPlayer() or nil
+    local alive = false
+    if lp then
+        local ok, a = pcall(lp.IsAlive, lp)
+        alive = ok and a
+    end
+    if not alive then
+        if lp and Q.placed then Q.active, Q.dead = true, true; Q.anim = "idle"; return end
+        Q.placed, Q.active, Q.dead = false, false, false
+        return
+    end
+    if Q.dead then Q.dead, Q.placed = false, false end
+    Q.active = true
+    local def = L.PETS[settings.petSel] or L.PETS[1]
+    if not Q.v then Q.v, Q.t0v, Q.t1v = Vector3(0, 0, 0), Vector3(0, 0, 0), Vector3(0, 0, 0) end
+
+    -- where it wants to be: beside me, a little ahead or behind
+    local o = lp:GetAbsOrigin()
+    local okY, ang = pcall(engine.GetViewAngles)
+    local vyaw = (okY and ang and ang.y or 0) * pi / 180
+    -- her place is worked out from where I look, or only from where I walk
+    if not settings.petCam then
+        local okV, vel = pcall(lp.EstimateAbsVelocity, lp)
+        if okV and vel and vel.x * vel.x + vel.y * vel.y > 900 then Q.walkYaw = math.atan(vel.y, vel.x)
+        elseif not Q.walkYaw then Q.walkYaw = vyaw end
+        vyaw = Q.walkYaw
+    end
+    local side = (settings.petSide == 2) and -1 or 1
+    local d = settings.petDist
+    local fb = settings.petFront and 0.9 or -0.8
+    local tx = o.x + cos(vyaw) * d * fb + cos(vyaw + pi / 2) * d * 0.7 * side
+    local ty = o.y + sin(vyaw) * d * fb + sin(vyaw + pi / 2) * d * 0.7 * side
+    -- roaming: a new spot near me every few seconds, a new one right away when I walk off
+    if settings.petSide == 3 then
+        local r = d * 1.6
+        local rx, ry = (Q.roamX or o.x) - o.x, (Q.roamY or o.y) - o.y
+        local far = rx * rx + ry * ry > (r * 1.5) ^ 2
+        -- a new distance on the slider counts right away
+        if Q.roamD ~= d then Q.roamD, Q.roamX = d, nil end
+        if not Q.roamX or far or (not Q.moving and now() > (Q.roamAt or 0)) then
+            local a, rr = math.random() * 2 * pi, r * (0.35 + 0.65 * math.random())
+            Q.roamX, Q.roamY = o.x + cos(a) * rr, o.y + sin(a) * rr
+            Q.roamAt = now() + 2 + math.random() * 4
+        end
+        tx, ty = Q.roamX, Q.roamY
+    else
+        Q.roamX = nil
+    end
+    if not Q.placed then Q.x, Q.y, Q.z, Q.gz, Q.placed = tx, ty, o.z, o.z, true end
+    local dt = frameDt()
+    local dx, dy = tx - Q.x, ty - Q.y
+    local dist = sqrt(dx * dx + dy * dy)
+    local speed = 0
+    if dist > 900 then
+        Q.x, Q.y, Q.z, Q.gz = tx, ty, o.z, o.z
+    elseif dist > (Q.moving and 5 or 28) then
+        Q.moving = true
+        speed = clamp(dist * 3.2, 90, 470)
+        local step = min(dist, speed * dt)
+        Q.x, Q.y = Q.x + dx / dist * step, Q.y + dy / dist * step
+        Q.tyaw = math.atan(dy, dx)
+    else
+        Q.moving = false
+    end
+
+    -- the ground under it and whether I can see it, 10 times a second
+    local t = now()
+    if t - Q.traceAt > 0.1 then
+        Q.traceAt = t
+        Q.t0v.x, Q.t0v.y, Q.t0v.z = Q.x, Q.y, o.z + 50
+        Q.t1v.x, Q.t1v.y, Q.t1v.z = Q.x, Q.y, o.z - 260
+        local ok, tr = pcall(engine.TraceLine, Q.t0v, Q.t1v, 0x4000B)
+        if ok and tr and tr.fraction and tr.fraction < 1 and tr.endpos then Q.gz = tr.endpos.z else Q.gz = o.z end
+        local okE, eye = pcall(lp.GetPropVector, lp, "localdata", "m_vecViewOffset[0]")
+        Q.t0v.x, Q.t0v.y, Q.t0v.z = o.x, o.y, o.z + ((okE and eye) and eye.z or 64)
+        Q.t1v.x, Q.t1v.y, Q.t1v.z = Q.x, Q.y, Q.z + def.height * settings.petSize / 100 * 0.6
+        local okV, tv = pcall(engine.TraceLine, Q.t0v, Q.t1v, 0x4000B)
+        Q.hidden = okV and tv and tv.fraction and tv.fraction < 0.97
+    end
+    Q.z = Q.z + (Q.gz - Q.z) * min(1, dt * 14)
+    local diff = (Q.tyaw - Q.yaw + pi) % (2 * pi) - pi
+    Q.yaw = Q.yaw + diff * min(1, dt * 10)
+    Q.seen = Q.seen + ((Q.hidden and 0 or 1) - Q.seen) * min(1, dt * 12)
+
+    -- which animation: jump while I am in the air, run, walk, crouch with me, idle
+    local okF, flags = pcall(lp.GetPropInt, lp, "m_fFlags")
+    flags = okF and flags or 1
+    local anim = "idle"
+    if flags & 1 == 0 then anim = "jump"
+    elseif speed > 240 then anim = "run"
+    elseif speed > 5 then anim = "walk"
+    elseif flags & 2 ~= 0 then anim = "crouch" end
+    if anim ~= Q.anim then Q.anim, Q.t0 = anim, t end
+end
+
+function L.pet.draw()
+    local Q = L.pet
+    if not Q.active or not Q.placed or Q.seen < 0.02 then return end
+    local def = L.PETS[settings.petSel] or L.PETS[1]
+    local id = Q.sheet(def, Q.anim)
+    if not id then return end
+    local v = Q.v
+    local h = def.height * settings.petSize / 100
+    -- a jump lifts her off the ground in an arc (the picture itself only shows the motion)
+    local hop = 0
+    if Q.anim == "jump" then hop = sin(pi * clamp((now() - Q.t0) / (def.len.jump or 0.8), 0, 1)) * h * 0.75 end
+    v.x, v.y, v.z = Q.x, Q.y, Q.z
+    local gx, gy = L.w2s(v)
+    v.z = Q.z + hop
+    local sx, sy = L.w2s(v)
+    v.z = Q.z + hop + h
+    local _, sy2 = L.w2s(v)
+    if not sx or not sy2 or sy2 >= sy then return end
+    local px = sy - sy2
+    -- the frame: the animation runs at its own speed, a jump plays once
+    local len = def.len[Q.anim] or 1
+    local u = (now() - Q.t0) / len
+    local frame = (Q.anim == "jump") and min(7, floor(u * 8)) or (floor(u * 8) % 8)
+    -- which of the 8 sides I see it from
+    local eye = Q.t0v
+    local rel = math.atan(eye.y - Q.y, eye.x - Q.x) - Q.yaw
+    local side = floor(rel / (pi / 4) + 0.5) % 8
+    -- the cell drawn so the feet stand on the ground
+    local cellPx = px / (def.tall or L.PET_TALL)
+    local x0, y0 = sx - cellPx / 2, sy - cellPx * L.PET_FEET
+    local u0, v0 = frame / 8, side / 8
+    local q = Q.q
+    q[1][1], q[1][2], q[1][3], q[1][4] = round(x0), round(y0), u0, v0
+    q[2][1], q[2][2], q[2][3], q[2][4] = round(x0 + cellPx), round(y0), u0 + 1 / 8, v0
+    q[3][1], q[3][2], q[3][3], q[3][4] = round(x0 + cellPx), round(y0 + cellPx), u0 + 1 / 8, v0 + 1 / 8
+    q[4][1], q[4][2], q[4][3], q[4][4] = round(x0), round(y0 + cellPx), u0, v0 + 1 / 8
+    -- a soft shadow under the feet
+    L.screenSpace()
+    if gx then
+        local shrink = 1 - 0.45 * hop / max(1, h * 0.75)
+        oval(gx, gy, cellPx * 0.17 * shrink, cellPx * 0.045 * shrink, C_BLACK, 90 * Q.seen * shrink)
+    end
+    rawColor(255, 255, 255, clamp(round(255 * Q.seen), 1, 255))
+    draw.TexturedPolygon(id, q, true)
+    L.pet.fxDraw(sx, sy2, cellPx)
+end
+
+---------------------------------------------------------------------------
+-- 8r. Extras: hitmarker, bullet tracers, kill card, class meters, respawn timer, match card, movement trail,
+-- screen weather, viewmodel, pet reactions, clean mode, config codes, own sounds
+---------------------------------------------------------------------------
+
+-- a number from the first property path that answers; kind "i" for whole numbers
+function L.pget(e, kind, ...)
+    if not e then return nil end
+    local fn = (kind == "i") and e.GetPropInt or e.GetPropFloat
+    for i = 1, select("#", ...) do
+        local ok, v = pcall(fn, e, table.unpack((select(i, ...))))
+        if ok and type(v) == "number" then return v end
+    end
+end
+
+-- one colour choice shared by tracers and the trail
+L.TR_COLS = { "Hit effect colours", "Accent", "Rainbow", "White" }
+function L.pickCol(mode, p)
+    if mode == 2 then return accent() end
+    if mode == 3 then return sampleStops(logoStops(6), p + now() * 0.2) end
+    if mode == 4 then return C_WHITE end
+    return L.fxColor(false, p)
+end
+
+-- hitmarker --------------------------------------------------------------------------------------------
+L.HM_STYLES = { "Cross", "Brackets", "Dots", "Ring", "Diamond" }
+L.HM_COLS = { "Hit and kill colours", "White", "Accent" }
+L.hm = { t0 = -99, kill = false, head = false }
+
+function L.hmHit(head, kill)
+    if not settings.hmOn then return end
+    local H, t = L.hm, now()
+    -- the kill comes right after the hit that did it: that marker turns into the kill one
+    if kill and t - H.t0 < 0.15 then H.kill, H.t0 = true, t; return end
+    H.t0, H.kill, H.head = t, kill, head
+end
+
+function L.hmShape(st, cx, cy, s, gap, th, c, a)
+    if st == 1 then
+        for i = 0, 3 do L.chArm(cx, cy, pi / 4 + i * pi / 2, gap, s, th, c, a, false) end
+    elseif st == 2 then
+        local len = max(3, s * 0.5)
+        for i = 0, 3 do
+            local sx, sy = (i % 2 == 0) and -1 or 1, (i < 2) and -1 or 1
+            local x0, y0 = cx + sx * s, cy + sy * s
+            rect(sx < 0 and x0 or x0 - len, sy < 0 and y0 or y0 - th, len, th, c, a)
+            rect(sx < 0 and x0 or x0 - th, sy < 0 and y0 or y0 - len, th, len, c, a)
+        end
+    elseif st == 3 then
+        for i = 0, 3 do
+            local an = pi / 4 + i * pi / 2
+            disc(cx + cos(an) * s * 0.8, cy + sin(an) * s * 0.8, max(1.5, th * 1.3), c, a)
+        end
+    elseif st == 4 then
+        L.thickRing(cx, cy, s * 0.85, max(2, th + 1), c, a)
+    else
+        tline(cx, cy - s, cx + s, cy, th, c, a)
+        tline(cx + s, cy, cx, cy + s, th, c, a)
+        tline(cx, cy + s, cx - s, cy, th, c, a)
+        tline(cx - s, cy, cx, cy - s, th, c, a)
+    end
+end
+
+function L.drawHitmarker()
+    local H = L.hm
+    local el = now() - H.t0
+    local life = settings.hmTime / 1000 * (H.kill and 1.5 or 1)
+    if el < 0 or el > life then return end
+    local sw, sh = draw.GetScreenSize()
+    local cx, cy = floor(sw / 2), floor(sh / 2)
+    local u = el / life
+    local a = 255 * (1 - u * u)
+    local head = H.head and settings.hmHead
+    local s = settings.hmSize * (H.kill and 1.4 or 1) * (head and 1.3 or 1) * (1 + 0.3 * (1 - easeOut(el / 0.12)))
+    local th = settings.hmThick
+    local c
+    if head then c = GOLD
+    elseif settings.hmCol == 2 then c = C_WHITE
+    elseif settings.hmCol == 3 then c = accent()
+    else c = H.kill and (L.hex(settings.colKill) or L.GREEN) or (L.hex(settings.colHit) or C_WHITE) end
+    L.screenSpace()
+    L.hmShape(settings.hmStyle, cx + 1, cy + 1, s, s * 0.4, th, C_BLACK, a * 0.6)
+    L.hmShape(settings.hmStyle, cx, cy, s, s * 0.4, th, c, a)
+    if H.kill then L.thickRing(cx, cy, s * 1.25 + 14 * easeOut(u), 2, c, a * 0.55) end
+end
+
+-- bullet tracers: a shot is noticed when the weapon's next-shot time jumps ahead -------------------------
+L.TR_STYLES = { "Beam", "Thin line", "Laser" }
+L.TR_STEPS = { 0, 0.02, 0.05, 0.1, 0.2, 0.35, 0.5, 0.7, 0.85 }
+L.tr = { list = {}, at = 0 }
+for i = 1, 64 do L.tr.list[i] = { t0 = -99, x1 = 0, y1 = 0, z1 = 0, x2 = 0, y2 = 0, z2 = 0, hit = false } end
+
+function L.trShot(lp)
+    local okA, ang = pcall(engine.GetViewAngles)
+    if not okA or not ang then return end
+    local o = lp:GetAbsOrigin()
+    local okE, off = pcall(lp.GetPropVector, lp, "localdata", "m_vecViewOffset[0]")
+    local ez = o.z + ((okE and off) and off.z or 64)
+    local p, y = ang.x * pi / 180, ang.y * pi / 180
+    local fx, fy, fz = cos(p) * cos(y), cos(p) * sin(y), -sin(p)
+    local rx, ry = sin(y), -cos(y)
+    local src = Vector3(o.x, o.y, ez)
+    local dst = Vector3(o.x + fx * 8192, o.y + fy * 8192, ez + fz * 8192)
+    local okT, tr = pcall(engine.TraceLine, src, dst, 0x4600400B)
+    local e = (okT and tr and tr.endpos) or dst
+    local T = L.tr
+    T.at = T.at % 64 + 1
+    local s = T.list[T.at]
+    -- from about where the gun is: a bit ahead, to the right and lower than the eyes
+    s.x1, s.y1, s.z1 = o.x + fx * 30 + rx * 7, o.y + fy * 30 + ry * 7, ez + fz * 30 - 7
+    s.x2, s.y2, s.z2 = e.x, e.y, e.z
+    s.hit = okT and tr and tr.fraction and tr.fraction < 1 or false
+    s.t0 = now()
+end
+
+function L.trPoll()
+    local T = L.tr
+    local lp = entities.GetLocalPlayer()
+    if not lp or not L.hp.alive then T.wep = nil; return end
+    local okW, w = pcall(lp.GetPropEntity, lp, "m_hActiveWeapon")
+    if not okW or not w then return end
+    local okV, valid = pcall(w.IsValid, w)
+    if not okV or not valid then return end
+    local nxt = L.pget(w, "f", { "LocalActiveWeaponData", "m_flNextPrimaryAttack" }, { "m_flNextPrimaryAttack" })
+    if not nxt then return end
+    local idx = w:GetIndex()
+    if T.wep ~= idx then T.wep, T.next = idx, nxt; return end
+    if nxt > T.next + 0.001 then
+        T.next = nxt
+        local okP, pt = pcall(w.GetWeaponProjectileType, w)
+        if okP and pt == 1 then L.trShot(lp) end
+    elseif nxt < T.next then
+        T.next = nxt
+    end
+end
+
+function L.drawTracers()
+    local T = L.tr
+    local t = now()
+    local life = settings.trTime / 1000
+    local v = T.v
+    if not v then v = Vector3(0, 0, 0); T.v = v end
+    L.screenSpace()
+    for i = 1, 64 do
+        local s = T.list[i]
+        local el = t - s.t0
+        if el >= 0 and el < life then
+            -- once I turn away the start of an older line is behind me: use the first part of it I can still see
+            local ax, ay
+            for _, k in ipairs(L.TR_STEPS) do
+                v.x, v.y, v.z = s.x1 + (s.x2 - s.x1) * k, s.y1 + (s.y2 - s.y1) * k, s.z1 + (s.z2 - s.z1) * k
+                ax, ay = L.w2s(v)
+                if ax then break end
+            end
+            v.x, v.y, v.z = s.x2, s.y2, s.z2
+            local bx, by = L.w2s(v)
+            if ax and bx then
+                local f = 1 - el / life
+                local c = L.pickCol(settings.trCol, i / 64)
+                if settings.trStyle == 1 then
+                    tline(ax, ay, bx, by, 6, c, 55 * f)
+                    tline(ax, ay, bx, by, 3, c, 130 * f)
+                    line(ax, ay, bx, by, C_WHITE, 230 * f)
+                elseif settings.trStyle == 2 then
+                    line(ax, ay, bx, by, c, 235 * f)
+                else
+                    local pulse = 0.6 + 0.4 * sin(t * 30 + i)
+                    tline(ax, ay, bx, by, 4, c, 120 * f * pulse)
+                    line(ax, ay, bx, by, c, 255 * f)
+                end
+                if s.hit then
+                    disc(bx, by, 5, c, 150 * f)
+                    disc(bx, by, 2, C_WHITE, 255 * f)
+                end
+            end
+        end
+    end
+end
+
+-- kill card ----------------------------------------------------------------------------------------------
+L.kc = { t0 = -99 }
+function L.killCard(name, class, weapon, custom, ent)
+    if not settings.kcOn then return end
+    local dist = "—"
+    local lp = entities.GetLocalPlayer()
+    if lp and ent then
+        local ok1, a = pcall(lp.GetAbsOrigin, lp)
+        local ok2, b = pcall(ent.GetAbsOrigin, ent)
+        if ok1 and ok2 and a and b then
+            local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
+            dist = string.format("%.1f m", sqrt(dx * dx + dy * dy + dz * dz) * 0.01905)
+        end
+    end
+    L.kc = { t0 = now(), name = name or "someone",
+             head = (custom == 1) and "HEADSHOT" or ((custom == 2) and "BACKSTAB" or "ELIMINATED"),
+             facts = { { "CLASS", class or "—" }, { "WEAPON", weapon or "—" }, { "DISTANCE", dist } } }
+end
+function L.kcPreview()
+    local old = settings.kcOn
+    settings.kcOn = true
+    L.killCard("Delicious Cake", "Soldier", "Rocket Launcher", 1, nil)
+    L.kc.facts[3][2] = "14.2 m"
+    settings.kcOn = old
+end
+
+function L.drawKillCard()
+    local K = L.kc
+    if not K.facts then return end
+    local el = now() - K.t0
+    local life = settings.kcTime
+    if el < 0 or el > life then return end
+    local sw, sh = draw.GetScreenSize()
+    local st = settings.phStyle
+    local W, H = 320, 80
+    local x, y = draggable("kc", sw / 2 - W / 2, sh * 0.64, W, H)
+    local aIn = easeOut(el / 0.25)
+    y = round(y + (1 - aIn) * 16)
+    local p = L.palFor(st, settings.phGrad)
+    ALPHA = aIn * clamp((life - el) / 0.4, 0, 1)
+    L.panelBg(st, x, y, W, H, nil, settings.phBorder, settings.phGrad)
+    local lx = x + p.pad + 12
+    if st ~= 6 then rect(x + p.pad + 1, y + 12, 3, H - 24, p.c) end
+    L.pt(F.tiny, K.head, lx, y + 8, 16, p.c)
+    L.pt(F.bold, fit(F.bold, K.name, W - (lx - x) - 12), lx, y + 22, 24, p.txt)
+    local colW = (W - (lx - x) - 10) / 3
+    for i = 1, 3 do
+        local f = K.facts[i]
+        local fx = lx + (i - 1) * colW
+        L.pt(F.tiny, f[1], fx, y + 50, 12, p.dim)
+        L.pt(F.small, fit(F.small, f[2], colW - 8), fx, y + 61, 16, p.txt)
+    end
+    ALPHA = 1
+end
+
+-- class meters ---------------------------------------------------------------------------------------------
+L.CM = { rows = {}, at = 0 }
+function L.meterRows()
+    local C = L.CM
+    local t = now()
+    if t - C.at < 0.1 then return C.rows end
+    C.at = t
+    local rows, n = C.rows, 0
+    local function add(label, frac, txt, hot)
+        n = n + 1
+        local r = rows[n] or {}
+        rows[n] = r
+        r[1], r[2], r[3], r[4] = label, clamp(frac, 0, 1), txt, hot
+    end
+    local lp = entities.GetLocalPlayer()
+    if lp and L.hp.alive then
+        local cls = L.pget(lp, "i", { "m_PlayerClass", "m_iClass" }) or 0
+        local function slot(sl)
+            local ok, w = pcall(lp.GetEntityForLoadoutSlot, lp, sl)
+            if ok and w then return w end
+        end
+        local function shared(name) return L.pget(lp, "f", { "m_Shared", name }, { name }) end
+        if cls == 5 then
+            local u = L.pget(slot(1), "f", { "LocalTFWeaponMedigunData", "m_flChargeLevel" }, { "m_flChargeLevel" })
+            if u then add("ÜBER", u, floor(u * 100 + 0.5) .. "%", u >= 0.999) end
+        elseif cls == 8 then
+            local c = shared("m_flCloakMeter")
+            if c then add("CLOAK", c / 100, floor(c + 0.5) .. "%", false) end
+        elseif cls == 4 then
+            local n2 = L.pget(slot(1), "i", { "PipebombLauncherLocalData", "m_iPipebombCount" }, { "m_iPipebombCount" })
+            if n2 then add("STICKIES", n2 / 8, n2 .. " / 8", n2 >= 8) end
+            local c = shared("m_flChargeMeter")
+            if c then add("CHARGE", c / 100, floor(c + 0.5) .. "%", c >= 100) end
+        elseif cls == 2 then
+            local d = L.pget(slot(0), "f", { "SniperRifleLocalData", "m_flChargedDamage" }, { "m_flChargedDamage" })
+            if d then add("CHARGE", d / 150, floor(d + 0.5) .. " dmg", d >= 149) end
+        elseif cls == 9 then
+            local ok, tbl = pcall(lp.GetPropDataTableInt, lp, "localdata", "m_iAmmo")
+            local m = ok and type(tbl) == "table" and tbl[4]
+            if m then add("METAL", m / 200, m .. " / 200", m >= 200) end
+        elseif cls == 3 or cls == 7 then
+            local r = shared("m_flRageMeter")
+            if r and r > 0 then add(cls == 3 and "BANNER" or "MMMPH", r / 100, floor(r + 0.5) .. "%", r >= 100) end
+        elseif cls == 1 then
+            local hy = shared("m_flHypeMeter")
+            if hy and hy > 0 then add("HYPE", hy / 100, floor(hy + 0.5) .. "%", hy >= 100) end
+        end
+    end
+    for i = n + 1, #rows do rows[i] = nil end
+    return rows
+end
+
+function L.drawMeters()
+    local rows = L.meterRows()
+    if #rows == 0 and not menu.open then return end
+    local sw, sh = draw.GetScreenSize()
+    local st = settings.phStyle
+    local p = L.palFor(st, settings.phGrad)
+    local W, head = 220, L.PH[st] or 32
+    local H = head + max(1, #rows) * 30 + 8
+    local x, y = draggable("cm", sw / 2 + 160, sh - H - 46, W, H)
+    L.panelBg(st, x, y, W, H, st == 6 and "METERS" or "Meters", settings.phBorder, settings.phGrad)
+    if #rows == 0 then
+        L.pt(p.f, "no meter for this class", x + p.pad, y + head + 4, 26, p.dim)
+        return
+    end
+    local t = now()
+    for i, r in ipairs(rows) do
+        local ry = y + head + 4 + (i - 1) * 30
+        L.pt(F.tiny, r[1], x + p.pad, ry, 16, p.dim)
+        L.pt(p.f, r[3], x + W - p.pad - textW(p.f, r[3]), ry - 2, 18, r[4] and GOLD or p.txt)
+        local bw = W - 2 * p.pad
+        local shown = anim("cm" .. r[1], r[2], 12)
+        rect(x + p.pad, ry + 19, bw, 5, p.track, 220)
+        local c = r[4] and mix(GOLD, C_WHITE, 0.3 + 0.3 * sin(t * 8)) or p.c
+        rect(x + p.pad, ry + 19, bw * shown, 5, c, 255)
+    end
+end
+
+-- respawn timer ---------------------------------------------------------------------------------------------
+function L.respawnLeft(lp)
+    local res = entities.GetPlayerResources()
+    if not res then return nil end
+    local ok, tbl = pcall(res.GetPropDataTableFloat, res, "m_flNextRespawnTime")
+    if not ok or type(tbl) ~= "table" then return nil end
+    local v = tbl[lp:GetIndex() + 1]
+    if type(v) ~= "number" or v <= 0 then return nil end
+    local left = v - globals.CurTime()
+    if left < -1 or left > 90 then return nil end
+    return max(0, left)
+end
+
+function L.drawRespawn()
+    local lp = entities.GetLocalPlayer()
+    if not lp or L.hp.alive then L.rsp = nil; return end
+    local okT, team = pcall(lp.GetTeamNumber, lp)
+    if not okT or (team or 0) < 2 then return end
+    local R = L.rsp
+    if not R then R = { t0 = now() }; L.rsp = R end
+    local left = L.respawnLeft(lp)
+    if left and (not R.total or left > R.total) then R.total = left end
+    local sw, sh = draw.GetScreenSize()
+    local st = settings.phStyle
+    local p = L.palFor(st, settings.phGrad)
+    local W, H = 300, 96
+    local x, y = draggable("rt", sw / 2 - W / 2, sh * 0.26, W, H)
+    ALPHA = easeOut((now() - R.t0) / 0.3)
+    L.panelBg(st, x, y, W, H, nil, settings.phBorder, settings.phGrad)
+    local cxm = x + W / 2
+    local big = left and string.format("%.1f", left) or tostring(floor(now() - R.t0)) .. "s"
+    textC(F.tiny, left and "RESPAWN IN" or "DEAD FOR", cxm, y + 8, 14, p.dim)
+    textC(F.big, big, cxm, y + 22, 32, (left and left < 1) and L.GREEN or p.txt)
+    local frac = (left and R.total and R.total > 0) and (1 - left / R.total) or 0
+    rect(x + 20, y + 58, W - 40, 4, p.track, 220)
+    rect(x + 20, y + 58, (W - 40) * frac, 4, p.c, 255)
+    local D = L.deadInfo
+    if D and now() - D.t0 < 90 then textC(F.small, fit(F.small, D.line, W - 30), cxm, y + 68, 22, p.dim) end
+    ALPHA = 1
+end
+
+-- match card ---------------------------------------------------------------------------------------------------
+L.mc = { at = 0 }
+L.TEAM_RED, L.TEAM_BLU = { 222, 76, 76 }, { 80, 146, 236 }
+function L.matchPoll()
+    local M = L.mc
+    if now() - M.at < 0.25 then return end
+    M.at = now()
+    M.left, M.red, M.blu = nil, nil, nil
+    local ct = globals.CurTime()
+    local ok, timers = pcall(entities.FindByClass, "CTeamRoundTimer")
+    if ok and type(timers) == "table" then
+        for _, tm in pairs(timers) do
+            local okS, show = pcall(tm.GetPropBool, tm, "m_bShowInHUD")
+            if not okS or show then
+                local okP, paused = pcall(tm.GetPropBool, tm, "m_bTimerPaused")
+                local left
+                if okP and paused then
+                    local okR, r = pcall(tm.GetPropFloat, tm, "m_flTimeRemaining")
+                    if okR then left = r end
+                else
+                    local okE, e = pcall(tm.GetPropFloat, tm, "m_flTimerEndTime")
+                    if okE and e then left = e - ct end
+                end
+                if type(left) == "number" then
+                    M.left, M.paused = max(0, left), okP and paused
+                    break
+                end
+            end
+        end
+    end
+    local okT, teams = pcall(entities.FindByClass, "CTFTeam")
+    if okT and type(teams) == "table" then
+        for _, tm in pairs(teams) do
+            local okN, num = pcall(tm.GetTeamNumber, tm)
+            local okS, sc = pcall(tm.GetPropInt, tm, "m_iScore")
+            if okN and okS and type(sc) == "number" then
+                if num == 2 then M.red = sc elseif num == 3 then M.blu = sc end
+            end
+        end
+    end
+    M.time = M.left and string.format("%d:%02d", floor(M.left / 60), floor(M.left % 60)) or "--:--"
+    M.redS, M.bluS = M.red and tostring(M.red) or "-", M.blu and tostring(M.blu) or "-"
+end
+
+function L.drawMatch()
+    L.matchPoll()
+    local M = L.mc
+    if not M.left and not M.red and not menu.open then return end
+    local sw = draw.GetScreenSize()
+    local st = settings.phStyle
+    local p = L.palFor(st, settings.phGrad)
+    local W, H = 220, 48
+    local x, y = draggable("mc", sw / 2 - W / 2, 52, W, H)
+    L.panelBg(st, x, y, W, H, nil, settings.phBorder, settings.phGrad)
+    roundRect(x + 8, y + 8, 46, H - 16, 8, L.TEAM_RED, 215)
+    textC(F.bold, M.redS or "-", x + 31, y + 8, H - 16, C_WHITE)
+    roundRect(x + W - 54, y + 8, 46, H - 16, 8, L.TEAM_BLU, 215)
+    textC(F.bold, M.bluS or "-", x + W - 31, y + 8, H - 16, C_WHITE)
+    L.pt(F.bold, M.time or "--:--", x + W / 2 - textW(F.bold, M.time or "--:--") / 2, y + 4, 26, p.txt)
+    local sub = M.paused and "PAUSED" or "ROUND"
+    L.pt(F.tiny, sub, x + W / 2 - textW(F.tiny, sub) / 2, y + 28, 14, p.dim)
+end
+
+-- movement trail ---------------------------------------------------------------------------------------------
+L.TRL_STYLES = { "Ribbon", "Sparkles", "Dots" }
+L.trl = { pts = {}, head = 0, at = 0 }
+for i = 1, 60 do L.trl.pts[i] = { x = 0, y = 0, z = 0, t = -99 } end
+
+function L.trailPoll()
+    local T = L.trl
+    local lp = entities.GetLocalPlayer()
+    if not lp or not L.hp.alive then return end
+    local t = now()
+    if t - T.at < 0.016 then return end
+    local okF, flags = pcall(lp.GetPropInt, lp, "m_fFlags")
+    local air = okF and type(flags) == "number" and (flags & 1) == 0
+    if not settings.trlAlways and not air and L.hp.speed < settings.trlSpeed then return end
+    local o = lp:GetAbsOrigin()
+    -- standing still adds nothing
+    local last = T.pts[T.head]
+    if T.head > 0 and t - last.t < 0.3 and abs(o.x - last.x) + abs(o.y - last.y) + abs(o.z + 10 - last.z) < 2 then return end
+    T.at = t
+    T.head = T.head % 60 + 1
+    local p = T.pts[T.head]
+    p.x, p.y, p.z, p.t = o.x, o.y, o.z + 10, t
+end
+
+function L.drawTrail()
+    local T = L.trl
+    if T.head == 0 then return end
+    local t = now()
+    local life = settings.trlLen / 10
+    local v = T.v
+    if not v then v = Vector3(0, 0, 0); T.v = v end
+    L.screenSpace()
+    local px, py, pt
+    for k = 0, 59 do
+        local i = (T.head - k - 1) % 60 + 1
+        local p = T.pts[i]
+        local age = t - p.t
+        if age > life or age < 0 then break end
+        v.x, v.y, v.z = p.x, p.y, p.z
+        local sx, sy = L.w2s(v)
+        local f = 1 - age / life
+        if sx then
+            local c = L.pickCol(settings.trlCol, k / 60)
+            if settings.trlStyle == 1 then
+                if px and pt - p.t < 0.08 then
+                    tline(px, py, sx, sy, 1 + settings.trlWidth * f, c, 140 * f)
+                    line(px, py, sx, sy, C_WHITE, 170 * f)
+                end
+            elseif settings.trlStyle == 2 then
+                local tw = 0.5 + 0.5 * sin(t * 14 + i)
+                disc(sx + (L.rnd(i, 1) - 0.5) * 12, sy + (L.rnd(i, 2) - 0.5) * 12, 1 + settings.trlWidth * 0.35 * f, c, 230 * f * tw)
+            else
+                disc(sx, sy, 1 + settings.trlWidth * 0.5 * f, c, 200 * f)
+            end
+        end
+        px, py, pt = sx, sy, p.t
+    end
+end
+
+-- screen weather: the menu's particle effects over the game -----------------------------------------------
+L.WX = { "Snow", "Rain", "Embers", "Fireflies", "Stars", "Radiance sparkles" }
+L.WX_KIND = { 3, 4, 2, 5, 6, 7 }
+L.wxField = { list = {} }
+function L.drawWeather()
+    if menu.openT > 0.5 then return end
+    ALPHA = settings.wxAlpha / 100 * (1 - menu.openT * 2)
+    L.field(L.wxField, L.WX_KIND[settings.wxKind] or 3, floor(settings.wxAmt * 1.6))
+    ALPHA = 1
+end
+
+-- viewmodel: the game's own settings, put back when it is turned off ---------------------------------------
+L.vm = { orig = nil, key = nil, at = 0 }
+function L.cvar(name)
+    local ok, i, f, s = pcall(client.GetConVar, name)
+    if ok then return i, f, s end
+end
+function L.vmApply(off)
+    local V = L.vm
+    if off or not settings.vmOn then
+        if V.orig then
+            for k, val in pairs(V.orig) do pcall(client.SetConVar, k, val) end
+            V.orig, V.key = nil, nil
+        end
+        return
+    end
+    if not V.orig then
+        local _, fov = L.cvar("viewmodel_fov")
+        local _, _, ofs = L.cvar("tf_viewmodels_offset_override")
+        local _, sway = L.cvar("cl_wpn_sway_scale")
+        local drawn = L.cvar("r_drawviewmodel")
+        V.orig = { viewmodel_fov = fov or 70, tf_viewmodels_offset_override = ofs or "", cl_wpn_sway_scale = sway or 5,
+                   r_drawviewmodel = drawn or 1 }
+    end
+    local key = settings.vmFov .. "|" .. settings.vmX .. "|" .. settings.vmY .. "|" .. settings.vmZ .. "|" ..
+                tostring(settings.vmSway) .. tostring(settings.vmHide)
+    local t = now()
+    -- set again every 2 seconds in case the game or a config put them back
+    if key == V.key and t - V.at < 2 then return end
+    V.key, V.at = key, t
+    pcall(client.SetConVar, "viewmodel_fov", settings.vmFov)
+    pcall(client.SetConVar, "tf_viewmodels_offset_override", settings.vmX .. " " .. settings.vmY .. " " .. settings.vmZ)
+    pcall(client.SetConVar, "cl_wpn_sway_scale", settings.vmSway and 0 or V.orig.cl_wpn_sway_scale)
+    pcall(client.SetConVar, "r_drawviewmodel", settings.vmHide and 0 or 1)
+end
+
+-- pet reactions ----------------------------------------------------------------------------------------------------
+L.PET_PINK, L.PET_CLOUD, L.PET_DROP = { 255, 96, 150 }, { 160, 166, 182 }, { 120, 170, 255 }
+function L.pet.react(kind)
+    local Q = L.pet
+    if not settings.petOn or not settings.petReact then return end
+    local fx = Q.fx
+    if not fx then fx = {}; Q.fx = fx end
+    if #fx >= 6 then table.remove(fx, 1) end
+    fx[#fx + 1] = { kind = kind, t0 = now(), seed = math.random() * 100 }
+end
+
+function L.pet.fxDraw(hx, hy, size)
+    local Q = L.pet
+    local fx = Q.fx
+    if not fx then return end
+    local t = now()
+    for i = #fx, 1, -1 do
+        local f = fx[i]
+        local el = t - f.t0
+        local life = (f.kind == "rain") and 3 or 1.5
+        if el > life then
+            table.remove(fx, i)
+        else
+            local fade = clamp((life - el) / 0.4, 0, 1) * Q.seen
+            if f.kind == "heart" then
+                for k = 1, 4 do
+                    local tt = el - k * 0.12
+                    if tt > 0 then
+                        local x = hx + (L.rnd(f.seed, k) - 0.5) * size * 0.5 + sin(tt * 5 + k) * 5
+                        local y = hy - 10 - tt * 46
+                        local a = 255 * fade * min(1, tt / 0.15)
+                        textC(F.iconL, "♥", x + 1, y + 1, 24, C_BLACK, a * 0.5)
+                        textC(F.iconL, "♥", x, y, 24, L.PET_PINK, a)
+                    end
+                end
+            elseif f.kind == "spark" then
+                local r = 10 + 30 * easeOut(el / 0.6)
+                for k = 1, 6 do
+                    local an = k * 1.047 + f.seed
+                    textC(F.icon, "✦", hx + cos(an) * r, hy - 16 + sin(an) * r * 0.6, 16, GOLD, 255 * fade)
+                end
+            else
+                local w = max(10, size * 0.16)
+                local cy = hy - 6 - w
+                disc(hx - w * 0.6, cy, w * 0.55, L.PET_CLOUD, 230 * fade)
+                disc(hx + w * 0.6, cy, w * 0.5, L.PET_CLOUD, 230 * fade)
+                disc(hx, cy - w * 0.35, w * 0.7, L.PET_CLOUD, 240 * fade)
+                for k = 1, 5 do
+                    local ph = (el * 1.6 + k / 5) % 1
+                    local dx = hx + (k - 3) * w * 0.35
+                    local dy = cy + w * 0.4 + ph * w * 1.6
+                    line(dx, dy, dx - 1, dy + 5, L.PET_DROP, 220 * fade * (1 - ph))
+                end
+            end
+        end
+    end
+end
+
+-- clean mode keys: off, or one of the menu keys -----------------------------------------------------------------
+L.CLEAN_KEYS = { { "Off" } }
+for i, k in ipairs(L.MENU_KEYS) do L.CLEAN_KEYS[i + 1] = k end
+
+-- the folder the configs are in, opened in Explorer
+function L.openConfigFolder()
+    local dir = DIR or ""
+    if not dir:match("^%a:") then
+        local ok, gd = pcall(engine.GetGameDir)
+        local root = ((ok and gd) and tostring(gd) or ""):gsub("[\\/]tf[\\/]?$", "")
+        dir = root .. "\\" .. dir
+    end
+    dir = dir:gsub("/", "\\"):gsub("[\\]+$", "")
+    local ok = os and os.execute and pcall(os.execute, 'start "" explorer "' .. dir .. '"')
+    if ok then
+        notify("▤", "Config folder opened", "Send a friend your destiny_slot file", accent())
+    else
+        print("[destiny] configs are in: " .. dir)
+        notify("▤", "Couldn't open Explorer", "The folder is printed in the console", RED)
+    end
+end
+
+-- own sounds: every .wav or .mp3 in tf/sound/destiny_custom joins the sound lists --------------------------------
+L.HIT_BASE, L.KILL_BASE = L.HIT_SOUNDS, L.KILL_SOUNDS
+function L.scanSounds()
+    pcall(filesystem.CreateDirectory, "tf/sound/destiny_custom")
+    local found = {}
+    pcall(filesystem.EnumerateDirectory, "tf/sound/destiny_custom/*", function(fn)
+        fn = tostring(fn)
+        local low = fn:lower()
+        if low:match("%.wav$") or low:match("%.mp3$") then found[#found + 1] = fn end
+    end)
+    table.sort(found, function(a, b) return a:lower() < b:lower() end)
+    local function build(base, skipOff)
+        local t = {}
+        if skipOff then t[1] = { "Off" } end
+        for i, s in ipairs(base) do
+            if not (skipOff and i == 1) then t[#t + 1] = s end
+        end
+        for _, fn in ipairs(found) do t[#t + 1] = { "★ " .. (fn:gsub("%.%w+$", "")), "destiny_custom/" .. fn } end
+        return t
+    end
+    L.HIT_SOUNDS, L.KILL_SOUNDS, L.STREAK_SOUNDS = build(L.HIT_BASE), build(L.KILL_BASE), build(L.KILL_BASE, true)
+    L.ownSounds = #found
+    settings.hitSound = clamp(settings.hitSound, 1, #L.HIT_SOUNDS)
+    settings.killSound = clamp(settings.killSound, 1, #L.KILL_SOUNDS)
+    settings.ksSound = clamp(settings.ksSound, 1, #L.STREAK_SOUNDS)
+end
+L.scanSounds()
+
+-- pet library: the pets kept on GitHub as text copies of their pictures (lmaobox can only download text)
+L.PET_REPO = "https://raw.githubusercontent.com/eintoaster/pets/main/"
+L.pdl = { names = nil, shown = nil, state = "idle", file = 0, entry = nil }
+
+function L.pdl.has(folder)
+    local ok, f = pcall(io.open, "destiny_files/pets/" .. folder .. "/jump.png", "rb")
+    if ok and f then f:close(); return true end
+    return false
+end
+
+function L.pdl.mark()
+    local D = L.pdl
+    D.shown, D.own = {}, {}
+    for i, e in ipairs(D.names) do
+        D.own[e.folder] = D.has(e.folder)
+        D.shown[i] = (D.own[e.folder] and "✓ " or "") .. e.name
+    end
+end
+
+function L.pdl.load()
+    local D = L.pdl
+    local ok, body = pcall(http.Get, L.PET_REPO .. "index.txt")
+    if not ok or type(body) ~= "string" or #body < 5 or body:sub(1, 3) == "404" then
+        notify("✖", "Can't load the pet list", "GitHub didn't answer", RED)
+        return
+    end
+    D.names = {}
+    for line in body:gmatch("[^\r\n]+") do
+        local folder, name, h, tall = line:match("^([%w_]+)|([^|]+)|([%d%.]+)|([%d%.]+)$")
+        if folder then
+            D.names[#D.names + 1] = { folder = folder, name = name, height = tonumber(h), tall = tonumber(tall) }
+            -- a pet that isn't in destiny yet joins the pet list
+            local known = false
+            for _, p in ipairs(L.PETS) do if p[2] == folder then known = true end end
+            if not known then
+                L.PETS[#L.PETS + 1] = { name, folder, height = tonumber(h), tall = tonumber(tall),
+                                        len = { idle = 2.4, walk = 0.9, run = 0.6, crouch = 2, jump = 0.8 } }
+                L.petNames = nil
+            end
+        end
+    end
+    if #D.names == 0 then D.names = nil; notify("✖", "Can't load the pet list", "the list is empty", RED); return end
+    D.mark()
+    settings.pdlSel = clamp(settings.pdlSel, 1, #D.names)
+end
+
+function L.pdl.start()
+    local D = L.pdl
+    if D.state == "downloading" or not D.names then return end
+    local e = D.names[settings.pdlSel]
+    if not e then return end
+    pcall(filesystem.CreateDirectory, "destiny_files")
+    pcall(filesystem.CreateDirectory, "destiny_files/pets")
+    pcall(filesystem.CreateDirectory, "destiny_files/pets/" .. e.folder)
+    D.state, D.entry, D.file, D.job = "downloading", e, 0, nil
+end
+
+function L.pdl.fail(why)
+    local D = L.pdl
+    if D.job and D.job.fh then pcall(D.job.fh.close, D.job.fh) end
+    D.state, D.job = "failed", nil
+    notify("✖", "Pet download failed", why, RED)
+end
+
+-- every frame while downloading: one picture at a time, turned back into a file about 3 ms per frame
+function L.pdl.work()
+    local D = L.pdl
+    local job = D.job
+    if not job then
+        D.file = D.file + 1
+        local anim = L.PET_ANIMS[D.file]
+        if not anim then
+            D.state = "done"
+            L.pet.free()
+            D.mark()
+            for i, p in ipairs(L.PETS) do if p[2] == D.entry.folder then settings.petSel = i end end
+            notify("❖", "Pet downloaded", D.entry.name .. " is now your pet", accent())
+            return
+        end
+        local ok, data = pcall(http.Get, L.PET_REPO .. "pets/" .. D.entry.folder .. "/" .. anim .. ".b64")
+        if not ok or type(data) ~= "string" or #data < 1000 then return D.fail(anim .. ": no answer from GitHub") end
+        if L.paimon.b64(data, 1, 8):sub(2, 4) ~= "PNG" then return D.fail(anim .. ": not a picture") end
+        local okF, fh = pcall(io.open, "destiny_files/pets/" .. D.entry.folder .. "/" .. anim .. ".png", "wb")
+        if not okF or not fh then return D.fail("can't write into destiny_files/pets") end
+        D.job = { data = data, pos = 1, fh = fh }
+        return
+    end
+    local t0, n = L.clock(), #job.data
+    repeat
+        local j = min(n, job.pos + 49151)
+        job.fh:write(L.paimon.b64(job.data, job.pos, j))
+        job.pos = j + 1
+    until job.pos > n or (L.clock() - t0) > 0.003
+    if job.pos > n then
+        job.fh:close()
+        D.job = nil
+    end
+end
+
+---------------------------------------------------------------------------
 -- 9. Menu background effects
 ---------------------------------------------------------------------------
 L.EMBER_GLOW = { 255, 90, 20 }
 L.RD_STOPS, L.RD_CORE = { { 124, 108, 255 }, { 158, 146, 255 }, { 99, 102, 241 } }, { 228, 224, 255 }
-L.BG_FX = { "Off", "Embers", "Snow", "Rain", "Fireflies", "Stars", "Radiance sparkles", "Radiance ribbons", "Silentium" }
+L.BG_FX = { "Off", "Embers", "Snow", "Rain", "Fireflies", "Stars", "Radiance sparkles", "Radiance ribbons", "Silentium", "Bats" }
 local particles, particleKind = {}, nil
 
 local function spawnParticle(kind, sw, sh, anywhere)
@@ -4147,6 +5747,62 @@ local function spawnParticle(kind, sw, sh, anywhere)
                 ph = math.random() * 6.28, sp = math.random() * 0.6 + 0.7 }
     if kind == 2 or kind == 7 then p.y = anywhere and p.y or sh + 5 end
     return p
+end
+
+-- a field of particles (embers, snow, rain, fireflies, stars, sparkles) kept in st
+L.bgField = { list = {} }
+function L.field(st, kind, n)
+    local sw, sh = draw.GetScreenSize()
+    if st.kind ~= kind then st.list, st.kind = {}, kind end
+    local particles = st.list
+    while #particles < n do particles[#particles + 1] = spawnParticle(kind, sw, sh, true) end
+    while #particles > n do table.remove(particles) end
+    local dt, t = frameDt(), now()
+    for i, p in ipairs(particles) do
+        if kind == 2 then
+            p.y = p.y - 40 * p.sp * dt
+            p.x = p.x + sin(t * 1.3 + p.ph) * 12 * dt
+            local fl = 0.6 + 0.4 * sin(t * 9 + p.ph)
+            if p.s > 2 then disc(p.x, p.y, p.s + 1.5, L.EMBER_GLOW, 40 * fl) end
+            disc(p.x, p.y, p.s * 0.7, { 255, 170, 60 }, 220 * fl)
+            if p.y < -5 then particles[i] = spawnParticle(kind, sw, sh, false) end
+        elseif kind == 3 then
+            p.y = p.y + 30 * p.sp * dt
+            p.x = p.x + sin(t * 0.8 + p.ph) * 18 * dt
+            disc(p.x, p.y, p.s * 0.8, C_WHITE, 200)
+            if p.y > sh + 5 then particles[i] = spawnParticle(kind, sw, sh, false) end
+        elseif kind == 4 then
+            p.y = p.y + 700 * p.sp * dt
+            p.x = p.x - 120 * dt
+            line(p.x, p.y, p.x + 3, p.y - 14, { 170, 200, 255 }, 120)
+            if p.y > sh + 15 then particles[i] = spawnParticle(kind, sw, sh, false); particles[i].y = -15 end
+        elseif kind == 5 then
+            p.x = p.x + cos(t * 0.5 + p.ph) * 20 * dt
+            p.y = p.y + sin(t * 0.7 + p.ph * 1.3) * 20 * dt
+            local gl = 0.5 + 0.5 * sin(t * 2.5 + p.ph)
+            disc(p.x, p.y, 6, { 200, 255, 120 }, 30 * gl)
+            disc(p.x, p.y, 2, { 230, 255, 160 }, 230 * gl)
+        elseif kind == 6 then
+            local tw = 0.4 + 0.6 * abs(sin(t * 1.4 * p.sp + p.ph))
+            disc(p.x, p.y, p.s * 0.6, C_WHITE, 230 * tw)
+            if p.s > 2.6 then
+                line(p.x - 4, p.y, p.x + 4, p.y, C_WHITE, 120 * tw)
+                line(p.x, p.y - 4, p.x, p.y + 4, C_WHITE, 120 * tw)
+            end
+        else
+            p.y = p.y - 25 * p.sp * dt
+            local tw = 0.5 + 0.5 * sin(t * 3 * p.sp + p.ph)
+            local c = sampleStops(L.RD_STOPS, (p.ph / 6.28) % 1)
+            disc(p.x, p.y, p.s * 2 + 4, c, 80 * tw)
+            disc(p.x, p.y, max(2, p.s), L.RD_CORE, 255 * tw)
+            if p.s > 2 then
+                local r = 5 + p.s * 2 * tw
+                line(p.x - r, p.y, p.x + r, p.y, L.RD_CORE, 170 * tw)
+                line(p.x, p.y - r, p.x, p.y + r, L.RD_CORE, 170 * tw)
+            end
+            if p.y < -5 then particles[i] = spawnParticle(kind, sw, sh, false) end
+        end
+    end
 end
 
 local function drawBackground(openT)
@@ -4157,57 +5813,9 @@ local function drawBackground(openT)
     local kind = settings.bgFx
     if kind == 8 then L.drawRibbons(false)
     elseif kind == 9 then L.drawRibbons(true); L.drawButterflies()
+    elseif kind == 10 then L.drawBats()
     elseif kind > 1 then
-        local n = floor(settings.bgFxAmt * 1.6)
-        if particleKind ~= kind then particles, particleKind = {}, kind end
-        while #particles < n do particles[#particles + 1] = spawnParticle(kind, sw, sh, true) end
-        while #particles > n do table.remove(particles) end
-        local dt, t = frameDt(), now()
-        for i, p in ipairs(particles) do
-            if kind == 2 then
-                p.y = p.y - 40 * p.sp * dt
-                p.x = p.x + sin(t * 1.3 + p.ph) * 12 * dt
-                local fl = 0.6 + 0.4 * sin(t * 9 + p.ph)
-                if p.s > 2 then disc(p.x, p.y, p.s + 1.5, L.EMBER_GLOW, 40 * fl) end
-                disc(p.x, p.y, p.s * 0.7, { 255, 170, 60 }, 220 * fl)
-                if p.y < -5 then particles[i] = spawnParticle(kind, sw, sh, false) end
-            elseif kind == 3 then
-                p.y = p.y + 30 * p.sp * dt
-                p.x = p.x + sin(t * 0.8 + p.ph) * 18 * dt
-                disc(p.x, p.y, p.s * 0.8, C_WHITE, 200)
-                if p.y > sh + 5 then particles[i] = spawnParticle(kind, sw, sh, false) end
-            elseif kind == 4 then
-                p.y = p.y + 700 * p.sp * dt
-                p.x = p.x - 120 * dt
-                line(p.x, p.y, p.x + 3, p.y - 14, { 170, 200, 255 }, 120)
-                if p.y > sh + 15 then particles[i] = spawnParticle(kind, sw, sh, false); particles[i].y = -15 end
-            elseif kind == 5 then
-                p.x = p.x + cos(t * 0.5 + p.ph) * 20 * dt
-                p.y = p.y + sin(t * 0.7 + p.ph * 1.3) * 20 * dt
-                local gl = 0.5 + 0.5 * sin(t * 2.5 + p.ph)
-                disc(p.x, p.y, 6, { 200, 255, 120 }, 30 * gl)
-                disc(p.x, p.y, 2, { 230, 255, 160 }, 230 * gl)
-            elseif kind == 6 then
-                local tw = 0.4 + 0.6 * abs(sin(t * 1.4 * p.sp + p.ph))
-                disc(p.x, p.y, p.s * 0.6, C_WHITE, 230 * tw)
-                if p.s > 2.6 then
-                    line(p.x - 4, p.y, p.x + 4, p.y, C_WHITE, 120 * tw)
-                    line(p.x, p.y - 4, p.x, p.y + 4, C_WHITE, 120 * tw)
-                end
-            else
-                p.y = p.y - 25 * p.sp * dt
-                local tw = 0.5 + 0.5 * sin(t * 3 * p.sp + p.ph)
-                local c = sampleStops(L.RD_STOPS, (p.ph / 6.28) % 1)
-                disc(p.x, p.y, p.s * 2 + 4, c, 80 * tw)
-                disc(p.x, p.y, max(2, p.s), L.RD_CORE, 255 * tw)
-                if p.s > 2 then
-                    local r = 5 + p.s * 2 * tw
-                    line(p.x - r, p.y, p.x + r, p.y, L.RD_CORE, 170 * tw)
-                    line(p.x, p.y - r, p.x, p.y + r, L.RD_CORE, 170 * tw)
-                end
-                if p.y < -5 then particles[i] = spawnParticle(kind, sw, sh, false) end
-            end
-        end
+        L.field(L.bgField, kind, floor(settings.bgFxAmt * 1.6))
     end
     ALPHA = 1
 end
@@ -4215,10 +5823,11 @@ end
 local function menuGlow(x, y, w, h, a)
     if not settings.menuGlow then return end
     local acc = accent()
+    if a < 0.97 then return end
     local pulse = 0.8 + 0.2 * sin(now() * 2)
-    for i = 1, 6 do
-        local e = i * 2
-        roundRectLine(x - e, y - e, w + 2 * e, h + 2 * e, 14 + e, acc, (70 - i * 11) * pulse * a)
+    for i = 1, 3 do
+        local e = i * 4 - 2
+        roundRectLine(x - e, y - e, w + 2 * e, h + 2 * e, 14 + e, acc, (74 - i * 20) * pulse)
     end
 end
 
@@ -4518,6 +6127,8 @@ L.savedAt = -99
 
 -- a row is drawn when part of it is in view and it stays inside the window
 local function rowVisible(h)
+    -- a see-through menu can't hide rows under its header, so only whole rows are drawn there
+    if L.glassA() < 255 then return cy >= view.top and cy + h <= view.bot end
     return cy + h > view.top and cy < view.bot and cy >= view.wtop + 1 and cy + h <= view.wbot - 1
 end
 local function rowClick(x, y, w, h)
@@ -4528,8 +6139,13 @@ end
 local function card(id, h)
     local hovered = id and not dropdown and inside(mouse.x, mouse.y, cx, cy, cw, h) and mouse.y >= view.top and mouse.y < view.bot
     local hv = id and anim("card" .. id, hovered and 1 or 0, 14) or 0
-    roundRect(cx, cy, cw, h, 12, mix(T.card, T.hover, hv))
-    roundRectLine(cx, cy, cw, h, 12, T.border)
+    if L.glassA() < 255 then
+        roundRect(cx, cy, cw, h, 12, C_WHITE, 26 + 22 * hv)
+        roundRectLine(cx, cy, cw, h, 12, C_WHITE, 70)
+    else
+        roundRect(cx, cy, cw, h, 12, mix(T.card, T.hover, hv))
+        roundRectLine(cx, cy, cw, h, 12, T.border)
+    end
 end
 
 local function section(title)
@@ -5094,6 +6710,24 @@ local PAGES = {
         dropRow("Extra effect", "fxExtra", L.FX_EXTRA)
         toggleRow("On kills", "fxOnKill")
         toggleRow("On every hit", "fxOnHit")
+        section("Hit particles")
+        toggleRow("Particles where the player I hit is standing", "ptOn")
+        dropRow("On a hit", "ptStyle", L.PT_STYLES)
+        dropRow("On a kill", "ptKillStyle", L.PT_STYLES)
+        dropRow("Colours", "ptCol", L.PT_COLORS)
+        toggleRow("On every hit", "ptHit")
+        toggleRow("On kills (a bigger burst)", "ptKill")
+        sliderRow("Amount", "ptAmt", 30, 200, "%")
+        sliderRow("Size", "ptSize", 40, 250, "%")
+        buttonRow("Try the hit one a few steps in front of you", "Hit", function() L.ptTest(false) end)
+        buttonRow("Try the kill one", "Kill", function() L.ptTest(true) end)
+        infoRow("Bursts started / frames drawn", (L.pt3.made or 0) .. " / " .. (L.pt3.drawn or 0))
+        if L.pt3.err then infoRow("Last problem", fit(F.small, L.pt3.err, cw * 0.6)) end
+        section("Bullet tracers")
+        toggleRow("Lines where my bullets go", "trOn")
+        dropRow("Look", "trStyle", L.TR_STYLES)
+        dropRow("Colour", "trCol", L.TR_COLS)
+        sliderRow("Stays", "trTime", 200, 2000, " ms")
         section("Screen shake")
         toggleRow("Shake the screen on kills (only the view, never your aim)", "shakeOn")
         dropRow("Shake style", "shakeStyle", L.SHAKE_STYLES)
@@ -5111,6 +6745,11 @@ local PAGES = {
         section("Sound")
         dropRow("Hit sound", "hitSound", names(L.HIT_SOUNDS))
         dropRow("Kill sound", "killSound", names(L.KILL_SOUNDS))
+        dropRow("Killstreak sound (3, 5, 10 ...)", "ksSound", names(L.STREAK_SOUNDS))
+        buttonRow("Own sounds (" .. (L.ownSounds or 0) .. "): .wav files in tf/sound/destiny_custom", "Rescan", function()
+            L.scanSounds()
+            notify("♪", "Sounds rescanned", L.ownSounds .. " of your own found", accent())
+        end)
         buttonRow("Play the sounds", "Play", function()
             playFrom(L.HIT_SOUNDS, settings.hitSound)
             playFrom(L.KILL_SOUNDS, settings.killSound)
@@ -5159,6 +6798,16 @@ local PAGES = {
         toggleRow("Show a summary when a round ends", "rsOn")
         sliderRow("Stays on screen", "rsTime", 4, 15, "s")
         buttonRow("See what it looks like", "Preview", function() L.roundEnd(0, true) end)
+        section("Kill card")
+        toggleRow("A card for every kill (name, class, weapon, distance)", "kcOn")
+        sliderRow("Stays", "kcTime", 2, 8, "s")
+        buttonRow("See what it looks like", "Preview", L.kcPreview)
+        section("Class meters")
+        toggleRow("Über, cloak, charge, stickies, sniper charge, metal, rage", "cmOn")
+        section("Respawn timer")
+        toggleRow("Countdown while I'm dead, with who killed me", "rtOn")
+        section("Match")
+        toggleRow("Round timer and team scores", "mcOn")
         section("Low health")
         toggleRow("Colour the screen edges when my health is low", "lhOn")
         sliderRow("Starts below", "lhAt", 10, 60, "%")
@@ -5187,6 +6836,29 @@ local PAGES = {
         toggleRow("Kicks and changes colour on a hit", "chHit")
         toggleRow("Spins with a ring on a kill", "chKill")
         paraCard("Drawn in the middle of the screen while you are alive. Hit and kill colours are the ones from Hit effects. If the game's crosshair ever stays hidden, type crosshair 1 in the console.")
+        section("Hitmarker")
+        toggleRow("A hitmarker on every hit", "hmOn")
+        dropRow("Shape", "hmStyle", L.HM_STYLES)
+        dropRow("Colour", "hmCol", L.HM_COLS)
+        sliderRow("Size", "hmSize", 4, 24, "px")
+        sliderRow("Thickness", "hmThick", 1, 5, "px")
+        sliderRow("Stays", "hmTime", 150, 800, " ms")
+        toggleRow("Gold and bigger on headshots", "hmHead")
+        buttonRow("See a hit and a kill", "Try", function()
+            local old = settings.hmOn
+            settings.hmOn = true
+            L.hmHit(false, false); L.hm.t0 = now() - 0.05; L.hmHit(false, true)
+            settings.hmOn = old
+        end)
+        section("Viewmodel")
+        toggleRow("Change where my weapon is and how it looks", "vmOn")
+        sliderRow("Forward / back", "vmX", -20, 20, "")
+        sliderRow("Left / right", "vmY", -20, 20, "")
+        sliderRow("Up / down", "vmZ", -20, 20, "")
+        sliderRow("Weapon FOV", "vmFov", 40, 110, "")
+        toggleRow("No weapon sway", "vmSway")
+        toggleRow("Hide my weapon", "vmHide")
+        paraCard("Uses the game's own viewmodel settings and puts them back when you turn this off or unload destiny. Some servers lock a few of them; those just don't change there. If lmaobox has its own viewmodel FOV turned on, it wins over Weapon FOV here.")
     end },
     { group = "VISUALS", icon = "☀", name = "World", draw = function()
         section("World look")
@@ -5232,6 +6904,20 @@ local PAGES = {
             buttonRow("See how this sky looks before downloading", "Preview", function() L.pv.show(pick) end)
         end
         paraCard("Skies in your folder are marked with a star. To add one by hand, put the 6 .vtf pictures of a sky (ending in rt, lf, bk, ft, up, dn) into Team Fortress 2\\tf\\materials\\skybox and press Rescan. The game only loads a sky when a map starts: after picking one, press Rejoin or wait for the next map. Turning it off works the same way. Servers that block custom files show the map's own sky.")
+        section("Movement trail")
+        toggleRow("A trail behind me when I jump or move fast", "trlOn")
+        dropRow("Look", "trlStyle", L.TRL_STYLES)
+        dropRow("Colour", "trlCol", L.TR_COLS)
+        sliderRow("Length", "trlLen", 2, 15, "")
+        toggleRow("Always, not only when I jump or move fast", "trlAlways")
+        if not settings.trlAlways then sliderRow("Shows from speed", "trlSpeed", 200, 800, " u/s") end
+        sliderRow("Thickness", "trlWidth", 1, 16, "px")
+        paraCard("The trail stays in the world where you were, so you see it when you look back or in third person.")
+        section("Screen weather")
+        toggleRow("Weather over the game", "wxOn")
+        dropRow("Weather", "wxKind", L.WX)
+        sliderRow("Amount", "wxAmt", 10, 100, "%")
+        sliderRow("Opacity", "wxAlpha", 10, 100, "%")
     end },
 
     { group = "MISC", icon = "✎", name = "Appearance", draw = function()
@@ -5322,9 +7008,48 @@ local PAGES = {
         paraCard("Elfaria is drawn live: she floats, blinks, talks and watches your mouse. Click her while the menu is open to pet her, drag her anywhere.")
     end },
 
+    { group = "MISC", icon = "❖", name = "Pets", draw = function()
+        local Q = L.pet
+        section("Pets")
+        toggleRow("A pet walks along with me", "petOn")
+        dropRow("Pet", "petSel", L.petNameList())
+        sliderRow("Size", "petSize", 40, 250, "%")
+        sliderRow("Distance from me", "petDist", 30, 150, " u")
+        dropRow("Side", "petSide", L.PET_SIDES)
+        toggleRow("Walks a little ahead of me (so I can see it)", "petFront")
+        toggleRow("Moves when I only turn the camera", "petCam")
+        toggleRow("Hearts on kills, sparkles on streaks, rain when I die", "petReact")
+        local state = "off"
+        if settings.petOn then
+            if Q.err then state = Q.err
+            elseif not Q.active then state = "waiting until I am alive on a map"
+            else state = "following (" .. Q.anim .. ")" end
+        end
+        infoRow("Status", fit(F.small, state, cw * 0.62))
+        paraCard("Only you see the pet. It runs after you, jumps when you jump and crouches when you crouch, and hides behind walls. Its pictures are in Team Fortress 2\\destiny_files\\pets.")
+        section("yeko's Pets")
+        paraCard("Downloads pets from my GitHub.")
+        local D = L.pdl
+        if not D.names then
+            buttonRow("Show yeko's pets", "Load", D.load)
+        else
+            dropRow("Pet to download (" .. #D.names .. ")", "pdlSel", D.shown)
+            local e = D.names[settings.pdlSel]
+            if D.state == "downloading" then
+                infoRow("Downloading " .. D.entry.name, min(5, D.file) .. " / 5")
+            elseif e then
+                buttonRow(D.own[e.folder] and "Already downloaded" or "Download this pet (about 13 MB, the game pauses briefly)",
+                          D.own[e.folder] and "Again" or "Download", D.start)
+            end
+        end
+    end },
     { group = "SYSTEM", icon = "⚙", name = "Config", draw = function()
         section("Menu key")
         dropRow("Open the destiny menu with", "menuKey", names(L.MENU_KEYS))
+        section("Clean mode")
+        dropRow("Hide every destiny overlay with", "cleanKey", names(L.CLEAN_KEYS))
+        if L.clean then infoRow("Clean mode", "on: overlays hidden") end
+        paraCard("For screenshots and clips: the key hides everything destiny draws in the game, and pressing it again brings it back. The menu still opens.")
         section("Configs")
         dropRow("Config slot", "slot", L.SLOTS)
         L.slotNames()
@@ -5337,6 +7062,7 @@ local PAGES = {
         buttonRow("Restore every default (nothing is saved)", "Reset", function()
             L.backup(); resetConfig(); notify("↺", "Defaults restored", "Undo brings your settings back", accent())
         end)
+        buttonRow("Open the config folder (to share configs)", "Open", L.openConfigFolder)
         section("Where")
         if DIR then
             paraCard("Configs are saved in: " .. (DIR == "" and "the Team Fortress 2 folder" or DIR) .. "  (autosave when you close the menu)")
@@ -5372,10 +7098,23 @@ local function drawMenu(openT)
 
     menuGlow(x, y, w, h, openT)
     roundRect(x - 2, y + 4, w + 4, h + 2, 16, C_BLACK, 90)
-    roundRect(x, y, w, h, 14, T.win)
-    roundRect(x, y, SIDE_W, h, 14, T.side)
-    rect(x + SIDE_W - 14, y, 14, h, T.side)
+    local ga = L.glassA()
+    roundRect(x, y, w, h, 14, T.win, ga)
+    if ga < 255 then
+        roundRect(x + SIDE_W, y, w - SIDE_W, 70, 14, C_WHITE, 14)
+        roundRectLine(x + 1, y + 1, w - 2, h - 2, 13, C_WHITE, 60)
+    end
+    roundRect(x, y, SIDE_W, h, 14, T.side, ga)
+    rect(x + SIDE_W - 14, y, 14, h, T.side, ga)
     rect(x + SIDE_W, y + 14, 1, h - 28, T.border)
+    local hw = L.isHW()
+    local hwFl = (sin(now() * 7) + sin(now() * 13.3)) / 2
+    if hw then
+        L.hwWeb(x + 1, y + 1, 1, 1, 92)
+        L.hwWeb(x + w - 1, y + h - 1, -1, -1, 110)
+        roundRectLine(x, y, w, h, 14, acc, 130)
+        roundRectLine(x + 3, y + 3, w - 6, h - 6, 12, acc, 34)
+    end
 
     -- header: avatar, DESTINY logo, Steam name pill
     drawAvatar(x + 18, y + 18, 58, 14)
@@ -5445,10 +7184,24 @@ local function drawMenu(openT)
     menu.contentH = cy - startY
 
     -- cover what scrolled out of view
-    rect(x + SIDE_W + 1, y + 1, w - SIDE_W - 27, view.top - y - 1, T.win)
-    rect(x + SIDE_W + 1, view.bot, w - SIDE_W - 27, y + h - view.bot - 1, T.win)
+    if L.glassA() == 255 then
+        rect(x + SIDE_W + 1, y + 1, w - SIDE_W - 27, view.top - y - 1, T.win)
+        rect(x + SIDE_W + 1, view.bot, w - SIDE_W - 27, y + h - view.bot - 1, T.win)
+    end
     roundRectLine(x, y, w, h, 14, T.border)
     text(F.title, page.name, contentX, y + 20, 30, T.text)
+    if hw then
+        L.screenSpace()
+        L.hwPumpkin(contentX + textW(F.title, page.name) + 26, y + 36, 11, hwFl)
+        L.hwScene(contentX + textW(F.title, page.name) + 60, x + w - 30, y + 2, y + 62, hwFl)
+    end
+    if L.isNiko() then
+        local nx, ny = x + w - 62, y + 44
+        local pulse = 0.7 + 0.3 * sin(now() * 2.2)
+        disc(nx - 50, ny + 6, 15, L.OS.sun, 46 * pulse)
+        disc(nx - 50, ny + 6, 8, L.OS.sunL, 255)
+        L.drawNiko(nx, ny, 40, 255)
+    end
 
     -- scrollbar
     if maxScroll > 0 then
@@ -5524,7 +7277,12 @@ local function onDraw()
     if menu.open ~= menu.cursor then
         menu.cursor = menu.open
         pcall(input.SetMouseInputEnabled, menu.open)
-        if not menu.open then saveConfig("autosave") end
+        if not menu.open then L.saveAt = now() + 0.8 end
+    end
+    if L.saveAt and now() >= L.saveAt and not menu.open then
+        L.saveAt = nil
+        local text = serialize()
+        if text ~= L.lastSaved and saveConfig("autosave") then L.lastSaved = text end
     end
     -- while the lmaobox menu is closed there is no cursor and GetMousePos can give nothing back
     local ok, pos = pcall(input.GetMousePos)
@@ -5543,6 +7301,7 @@ local function onDraw()
     safe("features", pollFeatures)
     if L.paimon.state == "downloading" then safe("paimon install", L.paimon.work) end
     if L.lib.state == "downloading" then safe("sky download", L.lib.work) end
+    if L.pdl.state == "downloading" then safe("pet download", L.pdl.work) end
     safe("world", updateWorld)
     -- auto-update: the menu is already up and usable
     if not updater.checked and now() >= updater.startAt then
@@ -5552,9 +7311,26 @@ local function onDraw()
 
     -- game-world effects first
     safe("self", L.pollSelf)
+    -- clean mode: one key hides every destiny overlay (the menu still opens)
+    local ck = L.CLEAN_KEYS[settings.cleanKey]
+    if ck and ck[2] and ck[2] ~= key and not typing and pressed(ck[2]) then
+        L.clean = not L.clean
+        if not L.clean then notify("◐", "Destiny overlays are back", nil, accent()) end
+    end
+    if settings.vmOn or L.vm.orig then safe("viewmodel", L.vmApply) end
+    if settings.trOn then safe("tracer shots", L.trPoll) end
+    if settings.trlOn then safe("trail points", L.trailPoll) end
+    if L.clean then
+        pcall(L.chCvar, true); pcall(L.kfCvar, true); pcall(L.hpCvar, true)
+    else
+    if settings.wxOn then safe("weather", L.drawWeather) end
+    if settings.trlOn then safe("trail", L.drawTrail) end
+    if settings.trOn then safe("tracers", L.drawTracers) end
     if settings.lhOn then safe("low health", L.drawLowHealth) end
     safe("screen effect", L.drawEdgeEffect)
     safe("extra effect", L.drawExtraEffect)
+    if settings.petOn then safe("pet", L.pet.update); safe("pet draw", L.pet.draw) end
+    if settings.ptOn then safe("particles", L.drawParticles) end
     if settings.dmgOn then safe("damage", drawDamage) end
     safe("announcer", drawAnnouncer)
     if settings.wmOn then safe("watermark", drawWatermark) end
@@ -5562,14 +7338,20 @@ local function onDraw()
     if settings.imOn then safe("input monitor", drawInputMonitor) end
     if settings.sgOn then safe("speed graph", L.drawSpeedGraph) end
     if settings.chOn or L.chHidden then safe("crosshair", L.drawCrosshair) end
+    if settings.hmOn then safe("hitmarker", L.drawHitmarker) end
     if settings.ssOn then safe("stats", L.drawStats) end
     if settings.kfOn or settings.kfHide or L.kfHidden then safe("killfeed", L.drawFeed) end
     if settings.hpOn or L.hpHidden then safe("health", L.drawVitals) end
     if settings.ksOn then safe("killstreak", L.drawStreak) end
     if settings.rsOn then safe("round summary", L.drawRound) end
+    if settings.kcOn then safe("kill card", L.drawKillCard) end
+    if settings.cmOn then safe("meters", L.drawMeters) end
+    if settings.rtOn then safe("respawn", L.drawRespawn) end
+    if settings.mcOn then safe("match", L.drawMatch) end
     if settings.compOn then safe("waifu", drawCompanion) end
     safe("notifications", drawNotifications)
     safe("welcome", L.drawWelcome)
+    end
 
     if menu.openT > 0.01 then
         safe("background", drawBackground, menu.openT)
@@ -5595,6 +7377,8 @@ callbacks.Register("Unload", "destiny_unload", function()
     if settings.worldOn then applyWorld(true) end
     pcall(L.sky.restore)
     pcall(L.lib.clear)
+    pcall(L.pet.remove)
+    pcall(L.vmApply, true)
     pcall(L.pv.free)
     pcall(L.chCvar, true)
     pcall(L.kfCvar, true)
