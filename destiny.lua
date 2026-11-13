@@ -19,6 +19,24 @@ local L = {}
 -- cleanup: lmaobox's draw calls leave ~250 bytes of garbage each
 pcall(collectgarbage, "generational", 20, 100)                     -- (draw.Color garbage dies young: cheap small cleanups)
 pcall(collectgarbage, "restart")                                   -- (Lua's own cleanup; destiny no longer drives it)
+-- While a map is loading the game's players, entities and materials are being torn down and rebuilt, and
+-- touching them then can crash the game. Everything that reads them waits until the game says it is fully
+-- connected and the map has been up for 3 seconds.
+L.isReady, L.rdAt = false, 0
+function L.gameReady()
+    local ok, st = pcall(function() return clientstate.GetClientSignonState() end)
+    local full = (not ok) or st == nil or st == 6
+    local map = engine.GetMapName() or ""
+    if not full or map == "" then L.rdMap = nil; return false end
+    if map ~= L.rdMap then L.rdMap, L.rdAt = map, now() end
+    return now() - L.rdAt > 3
+end
+-- me, or nothing while a map is loading
+function L.lp()
+    if not L.isReady then return nil end
+    return entities.GetLocalPlayer()
+end
+
 function L.gcStep()
     if L.gcOff then return end
     local t0 = L.clock and L.clock() or 0
@@ -127,7 +145,7 @@ local DEFAULTS = {
     cleanKey = 1, ksSound = 1,
     -- player HUDs
     phStyle = 1, phBorder = 1, phGrad = 1,
-    ssOn = false, kfOn = false, kfTime = 6, kfAssists = true, kfHide = false, hpOn = false, hpAmmo = true, hpHide = false,
+    ssOn = false, ssAuto = true, kfOn = false, kfTime = 6, kfAssists = true, kfHide = false, kfAll = false, kfBuild = true, hpOn = false, hpAmmo = true, hpHide = false,
     ksOn = true, ksStyle = 1, ksMin = 2, ksBanner = true, rsOn = true, rsTime = 8,
     lhOn = true, lhAt = 35, lhInt = 60, lhPulse = true, colLow = "",
     -- crosshair
@@ -831,7 +849,7 @@ local function steamName()
             if ok2 and n and n ~= "" then nameCache = n end
         end
         if not nameCache then
-            local lp = entities.GetLocalPlayer()
+            local lp = L.lp()
             nameCache = lp and lp:GetName() or nil
         end
     end
@@ -955,7 +973,7 @@ local UPDATE_DELAY = 3
 
 local updater = { checked = false, running = false, startAt = now() + UPDATE_DELAY, path = nil }
 -- which build this file is; the note in destiny_files says which build and commit was installed last
-L.BUILD = "202611111911"
+L.BUILD = "202611132051"
 
 -- the full ABSOLUTE path to this very file
 local function isAbs(p) return type(p) == "string" and (p:match("^%a:[\\/]") ~= nil or p:match("^[\\/][\\/]") ~= nil) end
@@ -1092,7 +1110,7 @@ end
 local me = { streak = 0, tier = 0, lastKill = -99 }
 
 local function myUserID()
-    local lp = entities.GetLocalPlayer()
+    local lp = L.lp()
     if not lp then return nil end
     local info = client.GetPlayerInfo(lp:GetIndex())
     return info and info.UserID
@@ -1189,8 +1207,11 @@ local function onGameEvent(e)
     if name == "game_newmap" or name == "server_spawn" or name == "client_beginconnect" or name == "client_connected" then
         L.sky.rushUntil = now() + 30
         L.sky.enforce()
+        if settings.ssAuto and (name == "game_newmap" or name == "client_beginconnect") then L.ssReset() end
         return
     end
+    if not L.isReady then return end
+    if name == "object_destroyed" then return L.feedBuilding(e) end
     if name == "teamplay_round_start" then L.roundStart(); return end
     if name == "teamplay_round_win" then
         if settings.rsOn then L.roundEnd(e:GetInt("team") or 0) end
@@ -1218,6 +1239,8 @@ local function onGameEvent(e)
         elseif e:GetInt("assister") == mine then
             if settings.ntAssists then notify("✚", "Assist on " .. nameOf(victim), joinParts(L.classOf(victim), weapon), SKY) end
             L.trackAssist(nameOf(victim))
+        else
+            L.feedOther(e, weapon)
         end
     elseif attacker == mine and victim ~= mine then
         local ent = entities.GetByUserID(victim)
@@ -3292,7 +3315,7 @@ for i = 1, 120 do L.speedHist[i] = 0 end
 function L.drawSpeedGraph()
     local sw, sh = draw.GetScreenSize()
     local speed = 0
-    local lp = entities.GetLocalPlayer()
+    local lp = L.lp()
     if lp then
         local ok, v = pcall(lp.EstimateAbsVelocity, lp)
         if ok and v then speed = sqrt(v.x * v.x + v.y * v.y) end
@@ -3934,10 +3957,46 @@ function L.react(kind, chance)
 end
 
 -- kill / death / assist entries of the killfeed, newest first
-function L.feedAdd(kind, a, mid, b)
+function L.feedAdd(kind, a, mid, b, ta, tb)
     local f = L.feed
-    table.insert(f, 1, { kind = kind, a = a, mid = mid, b = b, t0 = now() })
+    table.insert(f, 1, { kind = kind, a = a, mid = mid, b = b, ta = ta, tb = tb, t0 = now() })
     for i = #f, 7, -1 do f[i] = nil end
+end
+
+function L.teamOf(uid)
+    local ent = entities.GetByUserID(uid)
+    if not ent then return 0 end
+    local ok, t = pcall(ent.GetTeamNumber, ent)
+    return ok and t or 0
+end
+
+-- someone else's kill: "Killer + helper  weapon  victim" in their team colours
+function L.feedOther(e, weapon)
+    if not settings.kfOn or not settings.kfAll then return end
+    local victim, attacker, helper = e:GetInt("userid"), e:GetInt("attacker"), e:GetInt("assister")
+    local a = (attacker ~= 0 and attacker ~= victim) and nameOf(attacker) or ""
+    if a ~= "" and settings.kfAssists and helper and helper > 0 then a = a .. " + " .. nameOf(helper) end
+    L.feedAdd(4, a, weapon or (a == "" and "died" or "killed"), nameOf(victim),
+              (attacker ~= 0) and L.teamOf(attacker) or 0, L.teamOf(victim))
+end
+
+L.BUILDINGS = { [0] = "Dispenser", [1] = "Teleporter", [2] = "Sentry", [3] = "Sapper" }
+-- a destroyed building: mine, or anyone's when the killfeed shows everything
+function L.feedBuilding(e)
+    if not settings.kfOn or not settings.kfBuild then return end
+    local mine = myUserID()
+    local owner, attacker, helper = e:GetInt("userid"), e:GetInt("attacker"), e:GetInt("assister")
+    local what = L.BUILDINGS[e:GetInt("objecttype")] or "building"
+    local weapon = L.weaponName(e:GetString("weapon"))
+    if attacker == mine then
+        L.feedAdd(1, "You", (weapon or "destroyed") .. "  •  " .. what, nameOf(owner) .. "'s " .. what)
+    elseif owner == mine then
+        L.feedAdd(2, nameOf(attacker), (weapon or "destroyed"), "your " .. what)
+    elseif settings.kfAll then
+        local a = nameOf(attacker)
+        if settings.kfAssists and helper and helper > 0 then a = a .. " + " .. nameOf(helper) end
+        L.feedAdd(4, a, weapon or "destroyed", nameOf(owner) .. "'s " .. what, L.teamOf(attacker), L.teamOf(owner))
+    end
 end
 
 function L.trackKill(victim, weapon, how, flags)
@@ -3984,6 +4043,12 @@ end
 function L.roundStart()
     local r = L.rs
     r.kills, r.deaths, r.assists, r.best, r.dmg = 0, 0, 0, 0, 0
+    if settings.ssAuto then L.ssReset() end
+end
+
+function L.ssReset()
+    local s = L.ss
+    s.kills, s.deaths, s.assists, s.best, s.dmg, s.t0, L.ssAt = 0, 0, 0, 0, 0, now(), nil
 end
 
 L.rsRows = { { "KILLS", "0" }, { "DEATHS", "0" }, { "ASSISTS", "0" }, { "DAMAGE", "0" }, { "BEST STREAK", "0" } }
@@ -3991,7 +4056,7 @@ function L.roundEnd(team, preview)
     local r, rows = L.rs, L.rsRows
     rows[1][2], rows[2][2], rows[3][2] = tostring(r.kills), tostring(r.deaths), tostring(r.assists)
     rows[4][2], rows[5][2] = tostring(r.dmg), tostring(r.best)
-    local lp = entities.GetLocalPlayer()
+    local lp = L.lp()
     local ok, mine = pcall(function() return lp:GetTeamNumber() end)
     mine = ok and mine or 0
     if preview then L.rsTitle, L.rsWin = "VICTORY", true
@@ -4011,7 +4076,7 @@ function L.pollSelf()
     local t = now()
     if t - h.at < 0.1 then return end
     h.at = t
-    local lp = entities.GetLocalPlayer()
+    local lp = L.lp()
     local was = h.alive
     if not lp then h.alive = false; return end
     local okA, alive = pcall(lp.IsAlive, lp)
@@ -4132,19 +4197,25 @@ function L.drawFeed()
         local aIn = easeOut(age / 0.25)
         local aOut = clamp((life + 0.4 - age) / 0.4, 0, 1)
         local wa, wm, wb = textW(p.fb, e.a), textW(p.f, e.mid), textW(p.fb, e.b)
-        local w = p.pad * 2 + 6 + wa + 12 + wm + (wb > 0 and (12 + wb) or 0)
+        local w = p.pad * 2 + 6 + (wa > 0 and (wa + 12) or 0) + wm + (wb > 0 and (12 + wb) or 0)
         w = min(W, floor((w + 7) / 8) * 8)
         local ex = round((rightSide and (x + W - w) or x) + (rightSide and 1 or -1) * (1 - aIn) * 26)
         local ey = round(yy)
         local kc = (e.kind == 2) and RED or ((e.kind == 3) and SKY or p.c)
+        local ca, cb = e.kind == 2 and p.txt or kc, e.kind == 2 and RED or p.txt
+        if e.kind == 4 then
+            ca = (e.ta == 2) and L.TEAM_RED or ((e.ta == 3) and L.TEAM_BLU or p.txt)
+            cb = (e.tb == 2) and L.TEAM_RED or ((e.tb == 3) and L.TEAM_BLU or p.txt)
+            kc = p.dim
+        end
         ALPHA = aIn * aOut
         L.panelBg(st, ex, ey, w, 24, nil, settings.phBorder, settings.phGrad)
         if st ~= 6 then rect(ex + 4, ey + 6, 2, 12, kc) end
         local tx = ex + p.pad + 6
-        L.pt(p.fb, e.a, tx, ey, 24, e.kind == 2 and p.txt or kc)
-        tx = tx + wa + 12
+        L.pt(p.fb, e.a, tx, ey, 24, ca)
+        if wa > 0 then tx = tx + wa + 12 end
         L.pt(p.f, e.mid, tx, ey, 24, p.dim)
-        if wb > 0 then L.pt(p.fb, e.b, tx + wm + 12, ey, 24, e.kind == 2 and RED or p.txt) end
+        if wb > 0 then L.pt(p.fb, e.b, tx + wm + 12, ey, 24, cb) end
         ALPHA = 1
         yy = yy + rh * aOut
     end
@@ -4550,7 +4621,7 @@ end
 
 -- the menu's test button: a burst a few steps in front of me
 function L.ptTest(kill)
-    local lp = entities.GetLocalPlayer()
+    local lp = L.lp()
     if not lp then notify("✸", "Hit particles", "Join a map to see them", accent()); return end
     local ok, pos = pcall(L.originOf, lp)
     local okA, ang = pcall(engine.GetViewAngles)
@@ -4863,7 +4934,7 @@ end
 
 function L.pet.update()
     local Q = L.pet
-    local lp = settings.petOn and entities.GetLocalPlayer() or nil
+    local lp = settings.petOn and L.lp() or nil
     local alive = false
     if lp then
         local ok, a = pcall(lp.IsAlive, lp)
@@ -5125,23 +5196,27 @@ end
 
 function L.trPoll()
     local T = L.tr
-    local lp = entities.GetLocalPlayer()
+    local lp = L.lp()
     if not lp or not L.hp.alive then T.wep = nil; return end
     local okW, w = pcall(lp.GetPropEntity, lp, "m_hActiveWeapon")
     if not okW or not w then return end
     local okV, valid = pcall(w.IsValid, w)
     if not okV or not valid then return end
-    local nxt = L.pget(w, "f", { "LocalActiveWeaponData", "m_flNextPrimaryAttack" }, { "m_flNextPrimaryAttack" })
-    if not nxt then return end
-    local idx = w:GetIndex()
-    if T.wep ~= idx then T.wep, T.next = idx, nxt; return end
-    if nxt > T.next + 0.001 then
-        T.next = nxt
-        local okP, pt = pcall(w.GetWeaponProjectileType, w)
-        if okP and pt == 1 then L.trShot(lp) end
-    elseif nxt < T.next then
-        T.next = nxt
+    local okP, pt = pcall(w.GetWeaponProjectileType, w)
+    if not okP or pt ~= 1 then T.wep = nil; return end
+    -- bullets left: the clip, or the ammo for guns without a clip (minigun)
+    local clip = L.pget(w, "i", { "LocalWeaponData", "m_iClip1" }, { "m_iClip1" })
+    local left = clip
+    if not clip or clip < 0 then
+        local kind = L.pget(w, "i", { "LocalWeaponData", "m_iPrimaryAmmoType" }, { "m_iPrimaryAmmoType" })
+        local ok, tbl = pcall(lp.GetPropDataTableInt, lp, "localdata", "m_iAmmo")
+        left = (kind and ok and type(tbl) == "table") and tbl[kind + 1] or nil
     end
+    if not left then return end
+    local idx = w:GetIndex()
+    if T.wep ~= idx then T.wep, T.left = idx, left; return end
+    if left < T.left then L.trShot(lp) end
+    T.left = left
 end
 
 function L.drawTracers()
@@ -5192,7 +5267,7 @@ L.kc = { t0 = -99 }
 function L.killCard(name, class, weapon, custom, ent)
     if not settings.kcOn then return end
     local dist = "—"
-    local lp = entities.GetLocalPlayer()
+    local lp = L.lp()
     if lp and ent then
         local ok1, a = pcall(lp.GetAbsOrigin, lp)
         local ok2, b = pcall(ent.GetAbsOrigin, ent)
@@ -5256,7 +5331,7 @@ function L.meterRows()
         rows[n] = r
         r[1], r[2], r[3], r[4] = label, clamp(frac, 0, 1), txt, hot
     end
-    local lp = entities.GetLocalPlayer()
+    local lp = L.lp()
     if lp and L.hp.alive then
         local cls = L.pget(lp, "i", { "m_PlayerClass", "m_iClass" }) or 0
         local function slot(sl)
@@ -5335,7 +5410,7 @@ function L.respawnLeft(lp)
 end
 
 function L.drawRespawn()
-    local lp = entities.GetLocalPlayer()
+    local lp = L.lp()
     if not lp or L.hp.alive then L.rsp = nil; return end
     local okT, team = pcall(lp.GetTeamNumber, lp)
     if not okT or (team or 0) < 2 then return end
@@ -5367,6 +5442,7 @@ L.mc = { at = 0 }
 L.TEAM_RED, L.TEAM_BLU = { 222, 76, 76 }, { 80, 146, 236 }
 function L.matchPoll()
     local M = L.mc
+    if not L.isReady then return end
     if now() - M.at < 0.25 then return end
     M.at = now()
     M.left, M.red, M.blu = nil, nil, nil
@@ -5432,7 +5508,7 @@ for i = 1, 60 do L.trl.pts[i] = { x = 0, y = 0, z = 0, t = -99 } end
 
 function L.trailPoll()
     local T = L.trl
-    local lp = entities.GetLocalPlayer()
+    local lp = L.lp()
     if not lp or not L.hp.alive then return end
     local t = now()
     if t - T.at < 0.016 then return end
@@ -6106,6 +6182,8 @@ local function updateWorld()
     if now() - L.worldCheckAt < 0.25 then return end
     L.worldCheckAt = now()
     L.sky.tick(engine.GetMapName() or "")
+    -- recolouring walks through every material: never while a map loads
+    if not L.isReady then return end
     local map = engine.GetMapName() or ""
     if map ~= world.map then world.map, world.mapSince, world.key, world.again = map, now(), nil, false end
     if map == "" or now() - world.mapSince < 2 then return end
@@ -6845,13 +6923,13 @@ local PAGES = {
         dropRow("Gradient", "phGrad", L.GRADS)
         section("Session stats")
         toggleRow("Show the session card (kills, deaths, K/D, time)", "ssOn")
-        buttonRow("Start the session over", "Reset", function()
-            local s = L.ss
-            s.kills, s.deaths, s.assists, s.best, s.dmg, s.t0, L.ssAt = 0, 0, 0, 0, 0, now(), nil
-        end)
+        toggleRow("Start over on every new round and new game", "ssAuto")
+        buttonRow("Start the session over now", "Reset", L.ssReset)
         section("Killfeed")
         toggleRow("Show my kills and deaths", "kfOn")
-        toggleRow("Also show assists", "kfAssists")
+        toggleRow("Also show other players' kills", "kfAll")
+        toggleRow("Show destroyed buildings (sentry, dispenser, teleporter)", "kfBuild")
+        toggleRow("Show assists", "kfAssists")
         toggleRow("Hide the game's own killfeed", "kfHide")
         sliderRow("An entry stays", "kfTime", 3, 15, "s")
         section("Health and ammo")
@@ -6883,7 +6961,7 @@ local PAGES = {
         sliderRow("Strength", "lhInt", 10, 100, "%")
         toggleRow("Beat like a heart", "lhPulse")
         colorRow("Colour", "colLow", L.HOT)
-        paraCard("Drag any of these anywhere while the menu is open. The killfeed only shows what you did and what happened to you. If the game's killfeed ever stays hidden, type hud_deathnotice_time 6 in the console; for its health and ammo, hidehud 0.")
+        paraCard("Drag any of these anywhere while the menu is open. The killfeed shows what you did and what happened to you, and everyone else's kills when that is on. If the game's killfeed ever stays hidden, type hud_deathnotice_time 6 in the console; for its health and ammo, hidehud 0.")
     end },
     { group = "VISUALS", icon = "⌖", name = "Crosshair", draw = function()
         section("Crosshair")
@@ -7374,6 +7452,16 @@ local function onDraw()
     if L.paimon.state == "downloading" then safe("paimon install", L.paimon.work) end
     if L.lib.state == "downloading" then safe("sky download", L.lib.work) end
     if L.pdl.state == "downloading" then safe("pet download", L.pdl.work) end
+    local ready = L.gameReady()
+    if ready ~= L.isReady then
+        L.isReady = ready
+        if not ready then
+            -- nothing from the old map is kept
+            for i = #dmgs, 1, -1 do dmgs[i] = nil end
+            L.hp.alive, L.pet.placed, L.pet.active, L.tr.wep, L.rsp = false, false, false, nil, nil
+            L.mc.left, L.mc.red, L.mc.blu = nil, nil, nil
+        end
+    end
     safe("world", updateWorld)
     -- auto-update: the menu is already up and usable
     if not updater.checked and now() >= updater.startAt then
@@ -7403,7 +7491,7 @@ local function onDraw()
     safe("extra effect", L.drawExtraEffect)
     if settings.petOn then safe("pet", L.pet.update); safe("pet draw", L.pet.draw) end
     if settings.ptOn then safe("particles", L.drawParticles) end
-    if settings.dmgOn then safe("damage", drawDamage) end
+    if settings.dmgOn and L.isReady then safe("damage", drawDamage) end
     safe("announcer", drawAnnouncer)
     if settings.wmOn then safe("watermark", drawWatermark) end
     if settings.flOn then safe("hud", L.drawHud) end
